@@ -62,8 +62,8 @@ jobs:
       - name: 프로그램 풀기
         run: |
           mkdir -p runtime
-          unzip -q judm-auto-shorts-v1.1.zip -d /tmp/judm
-          cp -a /tmp/judm/judm-auto-shorts-v1.1/. runtime/
+          unzip -q judm-auto-shorts-v1.2.zip -d /tmp/judm
+          cp -a /tmp/judm/judm-auto-shorts-v1.2/. runtime/
 
       - uses: actions/setup-python@v5
         with:
