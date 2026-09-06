@@ -1,0 +1,110 @@
+name: JUD.M Auto Shorts
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 실행 모드
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - doctor
+          - process
+
+  schedule:
+    # 한국시간 12:37 / 20:37
+    - cron: '37 3,11 * * *'
+
+concurrency:
+  group: judm-auto-shorts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DRIVE_INBOX_FOLDER_ID: 1_a7e-874zRIyV_ojedYj0edQisGcfnUd
+  TARGET_PLATFORMS: youtube,instagram,tiktok
+
+  GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+
+  YOUTUBE_ENABLED: ${{ vars.YOUTUBE_ENABLED }}
+  GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+  GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+  YOUTUBE_PRIVACY_STATUS: public
+  YOUTUBE_CATEGORY_ID: '20'
+
+  INSTAGRAM_ENABLED: ${{ vars.INSTAGRAM_ENABLED }}
+  INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+  INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+  INSTAGRAM_API_VERSION: ${{ vars.INSTAGRAM_API_VERSION }}
+
+  CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+  CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+  CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+
+  TIKTOK_ENABLED: ${{ vars.TIKTOK_ENABLED }}
+  TIKTOK_CLIENT_ID: ${{ secrets.TIKTOK_CLIENT_ID }}
+  TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+  TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 프로그램 풀기
+        run: |
+          mkdir -p runtime
+          unzip -q judm-auto-shorts-v1.1.zip -d /tmp/judm
+          cp -a /tmp/judm/judm-auto-shorts-v1.1/. runtime/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 영상 편집 프로그램 설치
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fontconfig fonts-noto-cjk
+          mkdir -p "$HOME/.local/share/fonts"
+          curl -fsSL \
+          'https://raw.githubusercontent.com/google/fonts/main/ofl/dohyeon/DoHyeon-Regular.ttf' \
+          -o "$HOME/.local/share/fonts/DoHyeon-Regular.ttf"
+          fc-cache -f
+          pip install -r runtime/requirements.txt
+
+      - name: 연결 검사
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'doctor' }}
+        working-directory: runtime
+        env:
+          PYTHONPATH: src
+        run: python -m judm_auto_shorts.doctor
+
+      - name: 실제 자동 처리
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'process') }}
+        working-directory: runtime
+        env:
+          PYTHONPATH: src
+        run: python -m judm_auto_shorts.pipeline
+
+      - name: 편집 테스트
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'preview' }}
+        working-directory: runtime
+        env:
+          PYTHONPATH: src
+        run: python -m judm_auto_shorts.preview
+
+      - name: 편집 영상 저장
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'preview' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: judm-preview
+          path: runtime/out/edited/*.mp4
+          retention-days: 7
