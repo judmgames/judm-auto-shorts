@@ -107,3 +107,18 @@ def test_bline_unproven_event_stays_captionless():
     assert plan.style == "ASMR"
     assert plan.lead_text == ""
     assert plan.payoff_text == ""
+
+
+def test_bline_sustained_pop_feedback_is_clear():
+    s = _signals(n=96)
+    i = 36
+    for j in range(i - 2, i + 3):
+        s["motion"][j] = 0.9
+        s["scene"][j] = 0.8
+        s["flash"][j] = 0.95
+        s["audio"][j] = 0.9
+    s["density"][:] = 0.70
+    plan = plan_from_signals("BLINE", s, duration=16.0)
+    assert plan.style == "CLEAR"
+    assert plan.payoff_text == "됐다."
+    assert "bline_pop=1" in plan.reason

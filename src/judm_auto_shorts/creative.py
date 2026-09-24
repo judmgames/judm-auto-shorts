@@ -214,8 +214,25 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
         seg = event[i + 1:min(len(event), i + 1 + radius * 2)]
         post_activity[i] = float(np.mean(seg)) if len(seg) else 0.0
 
+    # B.Line's POP/clear feedback can keep the board occupancy nearly flat:
+    # a placed piece and cleared line may contain a similar number of cells.
+    # Detect the sustained audiovisual success burst instead of relying only
+    # on occupancy. A single flash is deliberately not enough.
+    fx = 0.5 * flash + 0.5 * audio
+    support_kernel = np.ones(5, dtype=np.float32) / 5.0
+    fx_support = np.convolve((fx >= 0.45).astype(np.float32), support_kernel, mode="same")
+    bline_pop_like = (
+        (event >= 0.62)
+        & (flash >= 0.65)
+        & (audio >= 0.55)
+        & (fx_support >= 0.40)
+        & (post_activity >= 0.035)
+    )
+
     story_bonus = np.zeros_like(event)
     story_bonus += np.where(drops >= 0.16, 0.34, np.where(drops >= 0.10, 0.22, 0.0))
+    if game_key == "BLINE":
+        story_bonus += np.where(bline_pop_like, 0.28, 0.0)
     if game_key == "PN37":
         fever_like = (event >= 0.48) & (np.maximum(flash, audio) >= 0.45)
         story_bonus += np.where(fever_like, 0.18, 0.0)
@@ -236,12 +253,15 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
         raise CreativeReject(f"no strong payoff: confidence={confidence:.3f}")
 
     # Only attach semantic copy when the visual evidence supports it.
-    # A bright success effect used to be mislabeled as a mistake, so B.Line
-    # now defaults to a clear or captionless satisfying clip.
-    if clear_drop >= 0.08:
+    # B.Line can prove a clear either through a board drop or through its
+    # sustained audiovisual POP feedback.
+    bline_pop = bool(game_key == "BLINE" and bline_pop_like[idx])
+    if clear_drop >= 0.08 or bline_pop:
         style = "CLEAR"
         if clear_drop >= 0.20:
             lead, payoff_text = "이거다.", "한 번에."
+        elif bline_pop:
+            lead, payoff_text = "", "됐다."
         else:
             lead, payoff_text = "여기.", "됐다."
         pre, target = 5.8, 9.0
@@ -293,7 +313,11 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
         payoff_text=payoff_text,
         cold_open=cold_open,
         cold_open_duration=cold_len,
-        reason=f"event={peak_event:.3f}, flash={peak_flash:.3f}, audio={peak_audio:.3f}",
+        reason=(
+            f"event={peak_event:.3f}, flash={peak_flash:.3f}, "
+            f"audio={peak_audio:.3f}, fx_support={float(fx_support[idx]):.3f}, "
+            f"bline_pop={int(bline_pop)}"
+        ),
     )
 
 
