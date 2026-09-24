@@ -34,7 +34,11 @@ class DriveProvider:
         return self.api.files().list(q=q,fields="files(id,name,mimeType,size,createdTime,parents,appProperties)",orderBy="createdTime",pageSize=limit,supportsAllDrives=True,includeItemsFromAllDrives=True).execute().get("files",[])
 
     def list_new(self,inbox_id:str,limit=20):
-        return [f for f in self._list(inbox_id,limit) if (f.get("appProperties") or {}).get("judm_state") not in {"ready","posting","posted"}]
+        return [
+            f for f in self._list(inbox_id,limit)
+            if (f.get("appProperties") or {}).get("judm_state")
+            not in {"ready","posting","posted","creative_reject"}
+        ]
 
     def list_ready(self,inbox_id:str,ready_id:str,limit=20):
         out=[]; seen=set()
@@ -42,6 +46,8 @@ class DriveProvider:
             for f in self._list(folder,limit):
                 if f["id"] in seen: continue
                 props=f.get("appProperties") or {}
+                if props.get("judm_state") == "creative_reject":
+                    continue
                 if folder==ready_id or props.get("judm_state") in {"ready","posting"}:
                     out.append(f); seen.add(f["id"])
         out.sort(key=lambda x:x.get("createdTime", "")); return out[:limit]

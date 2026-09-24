@@ -1,123 +1,208 @@
 from __future__ import annotations
-import json, math, os, subprocess
+
+import json
+import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-import cv2, numpy as np
-from .metadata import Metadata
+
+from .creative import CreativePlan, analyze_creative
+from .metadata import LABEL
+
 
 @dataclass
-class Probe: duration:float; width:int; height:int; fps:float; has_audio:bool
-@dataclass
-class Highlight: start:float; duration:float; peak_at:float; confidence:float
+class Probe:
+    duration: float
+    width: int
+    height: int
+    fps: float
+    has_audio: bool
 
-def run(cmd:list[str]):
+
+def run(cmd: list[str]):
     return subprocess.run(cmd, check=True, text=True, capture_output=True)
 
-def probe(path:str|Path)->Probe:
-    d=json.loads(run(["ffprobe","-v","error","-show_streams","-show_format","-of","json",str(path)]).stdout)
-    v=next(s for s in d["streams"] if s.get("codec_type")=="video")
-    fr=v.get("avg_frame_rate") or "30/1"; a,b=fr.split("/"); fps=float(a)/max(float(b),1)
-    dur=float(v.get("duration") or d.get("format",{}).get("duration") or 0)
-    return Probe(dur,int(v["width"]),int(v["height"]),fps,any(s.get("codec_type")=="audio" for s in d["streams"]))
 
-def norm(x):
-    if not len(x): return x
-    lo,hi=np.percentile(x,[10,95]); return np.zeros_like(x) if hi<=lo+1e-9 else np.clip((x-lo)/(hi-lo),0,1)
+def probe(path: str | Path) -> Probe:
+    data = json.loads(
+        run([
+            "ffprobe", "-v", "error", "-show_streams", "-show_format",
+            "-of", "json", str(path),
+        ]).stdout
+    )
+    video = next(s for s in data["streams"] if s.get("codec_type") == "video")
+    fr = video.get("avg_frame_rate") or "30/1"
+    a, b = fr.split("/")
+    fps = float(a) / max(float(b), 1)
+    duration = float(video.get("duration") or data.get("format", {}).get("duration") or 0)
+    return Probe(
+        duration=duration,
+        width=int(video["width"]),
+        height=int(video["height"]),
+        fps=fps,
+        has_audio=any(s.get("codec_type") == "audio" for s in data["streams"]),
+    )
 
-def visual_scores(path, hz=2.0):
-    cap=cv2.VideoCapture(str(path)); fps=cap.get(cv2.CAP_PROP_FPS) or 30; step=max(int(round(fps/hz)),1)
-    t=[]; s=[]; pg=ph=None; i=0
-    while True:
-        ok,f=cap.read()
-        if not ok: break
-        if i%step: i+=1; continue
-        sm=cv2.resize(f,(320,180),interpolation=cv2.INTER_AREA); g=cv2.cvtColor(sm,cv2.COLOR_BGR2GRAY); hsv=cv2.cvtColor(sm,cv2.COLOR_BGR2HSV)
-        h=cv2.calcHist([hsv],[0,1],None,[24,24],[0,180,0,256]); cv2.normalize(h,h)
-        if pg is None: score=0.0
-        else:
-            motion=float(np.mean(cv2.absdiff(g,pg)))/255
-            scene=float(cv2.compareHist(ph,h,cv2.HISTCMP_BHATTACHARYYA))
-            edge=float(np.mean(cv2.absdiff(cv2.Canny(pg,80,160),cv2.Canny(g,80,160))))/255
-            score=.58*motion+.27*scene+.15*edge
-        t.append(i/fps); s.append(score); pg,ph=g,h; i+=1
-    cap.release(); return np.asarray(t,np.float32),np.asarray(s,np.float32)
 
-def audio_scores(path,hz=2.0):
-    try: raw=subprocess.check_output(["ffmpeg","-v","error","-i",str(path),"-vn","-ac","1","-ar","8000","-f","f32le","pipe:1"])
-    except subprocess.CalledProcessError: return np.array([]),np.array([])
-    x=np.frombuffer(raw,np.float32); win=max(int(8000/hz),1)
-    rms=np.asarray([float(np.sqrt(np.mean(seg*seg)+1e-12)) for i in range(math.ceil(len(x)/win)) if (seg:=x[i*win:(i+1)*win]).size],np.float32)
-    return np.arange(len(rms),dtype=np.float32)/hz,rms
-
-def choose_highlight(path,target=18.0,min_len=12.0,max_len=24.0)->Highlight:
-    p=probe(path)
-    if p.duration<=0: raise ValueError("duration unavailable")
-    if p.duration<=max_len: return Highlight(0,p.duration,p.duration*.55,1)
-    vt,vs=visual_scores(path)
-    if not len(vt): return Highlight(0,min(target,p.duration),target*.55,0)
-    vs=norm(vs); ai=np.zeros_like(vs)
-    if p.has_audio:
-        at,av=audio_scores(path)
-        if len(at): ai=np.interp(vt,at,norm(av),left=0,right=0)
-    c=.78*vs+.22*ai
-    if len(c)>=3: c=.8*c+.2*np.convolve(c,np.ones(3)/3,mode="same")
-    L=min(max(target,min_len),max_len,p.duration-.1); step=float(np.median(np.diff(vt))) if len(vt)>1 else .5; n=max(int(L/step),1)
-    if len(c)<=n: start=0
+def font(role: str = "body") -> str:
+    if role == "hook":
+        candidates = [
+            os.getenv("JUDM_HOOK_FONT", ""),
+            str(Path.home() / ".local/share/fonts/DoHyeon-Regular.ttf"),
+            "/usr/local/share/fonts/judm/DoHyeon-Regular.ttf",
+        ]
     else:
-        sums=np.convolve(c,np.ones(n),mode="valid"); best=int(np.argmax(sums)); peak_global=float(vt[min(best+int(np.argmax(c[best:best+n])),len(vt)-1)])
-        start=max(0,peak_global-L*.58); start=min(start,p.duration-L)
-    mask=(vt>=start)&(vt<=start+L); local=c[mask]
-    peak=float(vt[mask][int(np.argmax(local))]-start) if len(local) else L*.55
-    conf=float(np.mean(np.sort(local)[-max(1,int(len(local)*.15)):])) if len(local) else 0
-    return Highlight(start,L,peak,conf)
-
-def font(role="body"):
-    if role=="hook": candidates=[os.getenv("JUDM_HOOK_FONT",""),str(Path.home()/".local/share/fonts/DoHyeon-Regular.ttf"),"/usr/local/share/fonts/judm/DoHyeon-Regular.ttf"]
-    else: candidates=[os.getenv("JUDM_BODY_FONT",""),"/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc","/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"]
-    for x in candidates:
-        if x and Path(x).exists(): return x
-    family="Do Hyeon" if role=="hook" else "Noto Sans CJK KR"
-    cp=subprocess.run(["fc-match","-f","%{file}",family],text=True,capture_output=True)
-    if cp.stdout.strip() and Path(cp.stdout.strip()).exists(): return cp.stdout.strip()
+        candidates = [
+            os.getenv("JUDM_BODY_FONT", ""),
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    family = "Do Hyeon" if role == "hook" else "Noto Sans CJK KR"
+    match = subprocess.run(
+        ["fc-match", "-f", "%{file}", family],
+        text=True, capture_output=True,
+    )
+    found = match.stdout.strip()
+    if found and Path(found).exists():
+        return found
     raise FileNotFoundError(f"font missing: {role}")
 
-def esc(s): return s.replace("\\",r"\\").replace(":",r"\:").replace("'",r"\'").replace("%",r"\%").replace(",",r"\,")
-def hook_size(s):
-    n=len(s.replace(" ","")); return 78 if n<=12 else 68 if n<=16 else 60 if n<=20 else 54
 
-def render(src,dst,meta:Metadata,hl:Highlight,platform:str):
-    src,dst=Path(src),Path(dst); dst.parent.mkdir(parents=True,exist_ok=True); p=probe(src)
-    hf,bf=font("hook"),font("body"); hs=hook_size(meta.hook); hk,lab=esc(meta.hook),esc(meta.game_label)
-    # Preserve the entire gameplay view; blurred background fills 9:16. Add two small zoom punches around hook and payoff.
-    z2=max(1.5,min(hl.peak_at,hl.duration-1.2)); z1_end=min(1.15,hl.duration)
-    factor=f"1+0.035*between(t,0,{z1_end:.2f})+0.045*between(t,{max(0,z2-.45):.2f},{min(hl.duration,z2+.55):.2f})"
-    base=(f"[0:v]trim=start={hl.start:.3f}:duration={hl.duration:.3f},setpts=PTS-STARTPTS,split=2[bg0][fg0];"
-          f"[bg0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=34,eq=brightness=-0.10:saturation=.82[bg];"
-          f"[fg0]scale=1080:1920:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
-          f"[comp]scale=w='trunc(1080*({factor})/2)*2':h='trunc(1920*({factor})/2)*2':eval=frame,"
-          f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2[zoom]")
-    cta=esc("살았다" if meta.game_key in {"SLIME","BLINE"} else "한 번 더")
-    c0=max(0,hl.duration-2.2)
-    if platform=="tiktok":
-        texts=(f";[zoom]drawtext=fontfile='{hf}':text='{hk}':fontsize={hs}:fontcolor=white:borderw=4:bordercolor=black@.92:"
-               f"box=1:boxcolor=black@.38:boxborderw=24:x=(w-text_w)/2:y=170:enable='between(t,0,3.2)'[vout]")
+def esc(text: str) -> str:
+    return (
+        text.replace("\\", r"\\")
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+        .replace("%", r"\%")
+        .replace(",", r"\,")
+    )
+
+
+def _draw_text(stream: str, out: str, text: str, start: float, end: float, font_path: str, y: str) -> str:
+    if not text or end <= start:
+        return f"[{stream}]null[{out}]"
+    size = 70 if len(text.replace(" ", "")) <= 4 else 62
+    return (
+        f"[{stream}]drawtext=fontfile='{font_path}':text='{esc(text)}':"
+        f"fontsize={size}:fontcolor=white:borderw=4:bordercolor=black@.88:"
+        f"box=1:boxcolor=black@.34:boxborderw=18:"
+        f"x=(w-text_w)/2:y={y}:enable='between(t,{start:.2f},{end:.2f})'[{out}]"
+    )
+
+
+def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> str:
+    src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    p = probe(src)
+    hf, bf = font("hook"), font("body")
+
+    payoff_abs = plan.start + plan.payoff_at
+    cold = plan.cold_open_duration if plan.cold_open else 0.0
+    if cold:
+        cold_start = max(0.0, min(payoff_abs - 0.14, max(0.0, p.duration - cold)))
+        seq = (
+            f"[0:v]trim=start={cold_start:.3f}:duration={cold:.3f},setpts=PTS-STARTPTS[coldv];"
+            f"[0:v]trim=start={plan.start:.3f}:duration={plan.duration:.3f},setpts=PTS-STARTPTS[mainv];"
+            f"[coldv][mainv]concat=n=2:v=1:a=0[seqv]"
+        )
     else:
-        texts=(f";[zoom]drawtext=fontfile='{hf}':text='{hk}':fontsize={hs}:fontcolor=white:borderw=4:bordercolor=black@.92:"
-               f"box=1:boxcolor=black@.38:boxborderw=24:x=(w-text_w)/2:y=170:enable='between(t,0,3.2)'[t1];"
-               f"[t1]drawtext=fontfile='{bf}':text='{lab}':fontsize=34:fontcolor=white@.92:borderw=2:bordercolor=black@.8:x=54:y=h-180[t2];"
-               f"[t2]drawtext=fontfile='{hf}':text='{cta}':fontsize=54:fontcolor=white:borderw=4:bordercolor=black@.9:"
-               f"x=(w-text_w)/2:y=h-310:enable='between(t,{c0:.2f},{hl.duration:.2f})'[vout]")
-    fc=base+texts
-    if p.has_audio: fc+=f";[0:a]atrim=start={hl.start:.3f}:duration={hl.duration:.3f},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=0.08,afade=t=out:st={max(0,hl.duration-.22):.2f}:d=0.22[aout]"
-    cmd=["ffmpeg","-y","-v","error","-i",str(src),"-filter_complex",fc,"-map","[vout]"]
-    if p.has_audio: cmd += ["-map","[aout]","-c:a","aac","-b:a","160k","-ar","48000"]
-    else: cmd += ["-an"]
-    cmd += ["-c:v","libx264","-preset","medium","-crf","19","-pix_fmt","yuv420p","-r","30","-movflags","+faststart","-maxrate","8M","-bufsize","16M",str(dst)]
-    run(cmd); return str(dst)
+        seq = (
+            f"[0:v]trim=start={plan.start:.3f}:duration={plan.duration:.3f},"
+            f"setpts=PTS-STARTPTS[seqv]"
+        )
 
-def auto_edit(src,out_dir,meta:Metadata):
-    hl=choose_highlight(src); out=Path(out_dir); out.mkdir(parents=True,exist_ok=True); stem=Path(src).stem
-    result={}
-    for p,s in (("youtube","yt"),("instagram","ig"),("tiktok","tt")): result[p]=render(src,out/f"{stem}_{s}.mp4",meta,hl,p)
-    result["highlight"]={"start":round(hl.start,3),"duration":round(hl.duration,3),"peak_at":round(hl.peak_at,3),"confidence":round(hl.confidence,3)}
-    return result
+    final_payoff = cold + plan.payoff_at
+    final_duration = cold + plan.duration
+    zoom_start = max(0.0, final_payoff - 0.34)
+    zoom_end = min(final_duration, final_payoff + 0.48)
+    cold_expr = f"+0.08*between(t,0,{cold:.2f})" if cold else ""
+    factor = f"1{cold_expr}+0.13*between(t,{zoom_start:.2f},{zoom_end:.2f})"
+
+    visual = (
+        f";[seqv]split=2[bg0][fg0];"
+        f"[bg0]scale=1080:1920:force_original_aspect_ratio=increase,"
+        f"crop=1080:1920,gblur=sigma=34,eq=brightness=-0.12:saturation=.84[bg];"
+        f"[fg0]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
+        f"[comp]scale=w='trunc(1080*({factor})/2)*2':"
+        f"h='trunc(1920*({factor})/2)*2':eval=frame,"
+        f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2[zoom]"
+    )
+
+    lead_start = max(cold + 0.10, final_payoff - 1.55)
+    lead_end = max(lead_start + 0.35, final_payoff - 0.55)
+    payoff_start = min(final_duration - 0.2, final_payoff + 0.06)
+    payoff_end = min(final_duration, payoff_start + 0.82)
+    if plan.style == "MISTAKE" and cold:
+        lead_start, lead_end = 0.06, min(cold, 0.48)
+
+    draw1 = _draw_text("zoom", "txt1", plan.lead_text, lead_start, lead_end, hf, "h-360")
+    draw2 = _draw_text("txt1", "txt2", plan.payoff_text, payoff_start, payoff_end, hf, "h-360")
+    watermark = (
+        f";[txt2]drawtext=fontfile='{bf}':text='{esc(label)}':fontsize=30:"
+        f"fontcolor=white@.72:borderw=2:bordercolor=black@.58:"
+        f"x=42:y=h-92[vout]"
+    )
+    fc = seq + visual + ";" + draw1 + ";" + draw2 + watermark
+
+    if p.has_audio:
+        if cold:
+            cold_start = max(0.0, min(payoff_abs - 0.14, max(0.0, p.duration - cold)))
+            fc += (
+                f";[0:a]atrim=start={cold_start:.3f}:duration={cold:.3f},"
+                f"asetpts=PTS-STARTPTS[colda];"
+                f"[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
+                f"asetpts=PTS-STARTPTS[maina];"
+                f"[colda][maina]concat=n=2:v=0:a=1,"
+                f"afade=t=in:st=0:d=0.04,"
+                f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
+            )
+        else:
+            fc += (
+                f";[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
+                f"asetpts=PTS-STARTPTS,"
+                f"afade=t=in:st=0:d=0.04,"
+                f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
+            )
+
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-filter_complex", fc, "-map", "[vout]"]
+    if p.has_audio:
+        cmd += ["-map", "[aout]", "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
+    else:
+        cmd += ["-an"]
+    cmd += [
+        "-c:v", "libx264", "-preset", "medium", "-crf", "19",
+        "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart",
+        "-maxrate", "8M", "-bufsize", "16M", str(dst),
+    ]
+    run(cmd)
+    return str(dst)
+
+
+def auto_edit(src: str | Path, out_dir: str | Path, meta_or_game) -> dict:
+    p = probe(src)
+    if p.duration < 2 or p.width < 240 or p.height < 240:
+        raise ValueError(f"source video too small/short: {p}")
+    game_key = getattr(meta_or_game, "game_key", str(meta_or_game))
+    plan = analyze_creative(src, game_key, p.duration)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    master = out / f"{Path(src).stem}_v3.mp4"
+    render(src, master, plan, LABEL.get(game_key, LABEL["GENERIC"]))
+    path = str(master)
+    return {
+        "youtube": path,
+        "instagram": path,
+        "tiktok": path,
+        "creative": plan.to_dict(),
+        "highlight": {
+            "start": plan.start,
+            "duration": plan.duration,
+            "peak_at": plan.payoff_at,
+            "confidence": plan.confidence,
+            "style": plan.style,
+        },
+    }
