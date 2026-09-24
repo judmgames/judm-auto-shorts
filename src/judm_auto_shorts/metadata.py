@@ -42,7 +42,7 @@ def _scene_copy(style: str, clear_drop: float) -> tuple[str, str]:
     if style == "CLEAR":
         if clear_drop >= 0.24:
             return "한 번에 정리됐다", "한 번에 크게 정리된 장면."
-        return "여기서 풀렸다", "막히던 판이 여기서 풀렸다."
+        return "여기서 지웠다", "POP이 나온 순간."
     if style == "FEVER":
         return "왔다", "플레이 흐름이 바뀐 순간."
     if style == "MISTAKE":

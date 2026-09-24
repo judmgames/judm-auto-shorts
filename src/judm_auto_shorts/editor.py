@@ -121,11 +121,22 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     cold_expr = f"+0.08*between(t,0,{cold:.2f})" if cold else ""
     factor = f"1{cold_expr}+0.13*between(t,{zoom_start:.2f},{zoom_end:.2f})"
 
+    if plan.game_key == "BLINE":
+        # B.Line POP is recorded in a very wide landscape layout. Showing the
+        # whole 2340x1080 frame makes the actual board tiny on a phone.
+        # Enlarge the gameplay layer and let the outer decoration crop away.
+        foreground = "[fg0]scale=1460:-2[fg]"
+    else:
+        foreground = (
+            "[fg0]scale=1080:1920:force_original_aspect_ratio=decrease[fg]"
+        )
+
     visual = (
         f";[seqv]split=2[bg0][fg0];"
         f"[bg0]scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920,gblur=sigma=34,eq=brightness=-0.12:saturation=.84[bg];"
-        f"[fg0]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+        f"crop=1080:1920,gblur=sigma=42,"
+        f"eq=brightness=-0.18:saturation=.56[bg];"
+        f"{foreground};"
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2[comp];"
         f"[comp]scale=w='trunc(1080*({factor})/2)*2':"
         f"h='trunc(1920*({factor})/2)*2':eval=frame,"
@@ -139,8 +150,8 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     if plan.style == "MISTAKE" and cold:
         lead_start, lead_end = 0.06, min(cold, 0.48)
 
-    draw1 = _draw_text("zoom", "txt1", plan.lead_text, lead_start, lead_end, hf, "h-360")
-    draw2 = _draw_text("txt1", "txt2", plan.payoff_text, payoff_start, payoff_end, hf, "h-360")
+    draw1 = _draw_text("zoom", "txt1", plan.lead_text, lead_start, lead_end, hf, "h-430")
+    draw2 = _draw_text("txt1", "txt2", plan.payoff_text, payoff_start, payoff_end, hf, "h-430")
     watermark = (
         f";[txt2]drawtext=fontfile='{bf}':text='{esc(label)}':fontsize=30:"
         f"fontcolor=white@.72:borderw=2:bordercolor=black@.58:"
