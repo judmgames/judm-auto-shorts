@@ -178,10 +178,21 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
     drops = np.zeros_like(event)
     before_d = np.zeros_like(event)
     after_d = np.zeros_like(event)
+    late_after_d = np.zeros_like(event)
     for i in range(len(event)):
         before_d[i] = _window_mean(density, i, radius, True)
         after_d[i] = _window_mean(density, i, radius, False)
-        drops[i] = max(0.0, before_d[i] - after_d[i])
+
+        # Clear effects can temporarily fill the board ROI with bright particles
+        # and make the immediate post-event frame look just as "occupied".
+        # Compare again after the effect has had time to disappear.
+        late_start = min(len(density), i + 1 + radius)
+        late_end = min(len(density), i + 1 + radius * 3)
+        late_seg = density[late_start:late_end]
+        late_after_d[i] = float(np.mean(late_seg)) if len(late_seg) else after_d[i]
+
+        effective_after = min(float(after_d[i]), float(late_after_d[i]))
+        drops[i] = max(0.0, float(before_d[i]) - effective_after)
     drop_score = np.clip(drops / 0.22, 0, 1)
     payoff = np.clip(0.58 * event + 0.30 * drop_score + 0.12 * np.maximum(audio, flash), 0, 1)
 
@@ -215,7 +226,8 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
 
     confidence = float(payoff[idx])
     clear_drop = float(drops[idx])
-    db, da = float(before_d[idx]), float(after_d[idx])
+    db = float(before_d[idx])
+    da = min(float(after_d[idx]), float(late_after_d[idx]))
     peak_event = float(event[idx])
     peak_flash = float(flash[idx])
     peak_audio = float(audio[idx])
@@ -223,13 +235,12 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
     if confidence < 0.34 and peak_event < 0.42:
         raise CreativeReject(f"no strong payoff: confidence={confidence:.3f}")
 
-    if clear_drop >= 0.16 and db >= 0.46:
-        style = "RESCUE"
-        lead, payoff_text = "한 칸.", "살았다."
-        pre, target = 6.2, 9.5
-    elif clear_drop >= 0.10:
+    # Only attach semantic copy when the visual evidence supports it.
+    # A bright success effect used to be mislabeled as a mistake, so B.Line
+    # now defaults to a clear or captionless satisfying clip.
+    if clear_drop >= 0.08:
         style = "CLEAR"
-        if clear_drop >= 0.24:
+        if clear_drop >= 0.20:
             lead, payoff_text = "이거다.", "한 번에."
         else:
             lead, payoff_text = "여기.", "됐다."
@@ -238,10 +249,6 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
         style = "FEVER"
         lead, payoff_text = "하나만 더.", "됐다."
         pre, target = 5.2, 8.5
-    elif peak_event >= 0.56 and da >= db - 0.02:
-        style = "MISTAKE"
-        lead, payoff_text = "아.", "여기였네."
-        pre, target = 5.0, 8.5
     elif peak_event >= 0.43:
         style = "ASMR"
         lead = payoff_text = ""

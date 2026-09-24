@@ -78,3 +78,32 @@ def test_outro_flash_does_not_beat_real_gameplay_event():
     plan = plan_from_signals("BLINE", s, duration=12.0)
     assert plan.style in {"RESCUE", "CLEAR"}
     assert plan.start < 8.0
+
+
+def test_bline_delayed_board_drop_becomes_clear():
+    s = _signals(n=96)
+    i = 36
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.9
+    s["flash"][i] = 1.0
+    s["audio"][i] = 0.9
+    s["density"][: i + 7] = 0.78
+    s["density"][i + 7 :] = 0.54
+    plan = plan_from_signals("BLINE", s, duration=16.0)
+    assert plan.style == "CLEAR"
+    assert plan.clear_drop >= 0.08
+    assert plan.payoff_text in {"됐다.", "한 번에."}
+
+
+def test_bline_unproven_event_stays_captionless():
+    s = _signals(n=96)
+    i = 36
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.9
+    s["flash"][i] = 1.0
+    s["audio"][i] = 1.0
+    s["density"][:] = 0.66
+    plan = plan_from_signals("BLINE", s, duration=16.0)
+    assert plan.style == "ASMR"
+    assert plan.lead_text == ""
+    assert plan.payoff_text == ""
