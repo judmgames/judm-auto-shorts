@@ -185,11 +185,34 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
     drop_score = np.clip(drops / 0.22, 0, 1)
     payoff = np.clip(0.58 * event + 0.30 * drop_score + 0.12 * np.maximum(audio, flash), 0, 1)
 
-    valid = (t >= 1.0) & (t <= max(1.0, duration - 1.0))
+    # Long screen recordings commonly end on retry/lobby/result UI. Keep a
+    # generous tail guard and rank gameplay-shaped events above raw flashes.
+    if duration >= 60:
+        end_guard = 8.0
+    elif duration >= 20:
+        end_guard = 4.0
+    else:
+        end_guard = 1.5
+    safe_end = max(3.0, duration - end_guard)
+    valid = (t >= 2.0) & (t <= max(2.0, safe_end - 1.2))
     if not np.any(valid):
-        valid[:] = True
-    masked = np.where(valid, payoff, -1)
+        valid = (t >= 0.5) & (t <= max(0.5, duration - 0.8))
+
+    post_activity = np.zeros_like(event)
+    for i in range(len(event)):
+        seg = event[i + 1:min(len(event), i + 1 + radius * 2)]
+        post_activity[i] = float(np.mean(seg)) if len(seg) else 0.0
+
+    story_bonus = np.zeros_like(event)
+    story_bonus += np.where(drops >= 0.16, 0.34, np.where(drops >= 0.10, 0.22, 0.0))
+    if game_key == "PN37":
+        fever_like = (event >= 0.48) & (np.maximum(flash, audio) >= 0.45)
+        story_bonus += np.where(fever_like, 0.18, 0.0)
+    menu_penalty = np.where((post_activity < 0.045) & (drops < 0.08), 0.30, 0.0)
+    ranked = payoff + story_bonus - menu_penalty
+    masked = np.where(valid, ranked, -1)
     idx = int(np.argmax(masked))
+
     confidence = float(payoff[idx])
     clear_drop = float(drops[idx])
     db, da = float(before_d[idx]), float(after_d[idx])
@@ -228,14 +251,14 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
 
     payoff_time = float(t[idx])
     start = max(0.0, payoff_time - pre)
-    remaining = max(0.0, duration - start)
+    remaining = max(0.0, safe_end - start)
     clip_duration = min(target, remaining)
     if clip_duration < 3.0:
-        raise CreativeReject("selected event is too close to the end")
+        raise CreativeReject("selected event is too close to the protected outro")
     payoff_at = payoff_time - start
     if payoff_at < 2.0:
         start = max(0.0, payoff_time - 2.8)
-        clip_duration = min(target, duration - start)
+        clip_duration = min(target, max(0.0, safe_end - start))
         payoff_at = payoff_time - start
 
     cold_open = style in {"RESCUE", "CLEAR", "FEVER", "MISTAKE"} and duration >= 5.0

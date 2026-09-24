@@ -58,3 +58,23 @@ def test_dead_video_rejected():
     }
     with pytest.raises(CreativeReject):
         plan_from_signals("BLINE", s, duration=12.0)
+
+
+def test_outro_flash_does_not_beat_real_gameplay_event():
+    s = _signals()
+    clear_i = 30
+    outro_i = 68
+    s["motion"][clear_i] = 0.8
+    s["scene"][clear_i] = 0.7
+    s["audio"][clear_i] = 0.6
+    s["density"][:clear_i] = 0.72
+    s["density"][clear_i + 1:] = 0.48
+
+    s["motion"][outro_i] = 1.0
+    s["scene"][outro_i] = 1.0
+    s["flash"][outro_i] = 1.0
+    s["audio"][outro_i] = 1.0
+
+    plan = plan_from_signals("BLINE", s, duration=12.0)
+    assert plan.style in {"RESCUE", "CLEAR"}
+    assert plan.start < 8.0
