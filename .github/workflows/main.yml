@@ -59,12 +59,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 프로그램 풀기
-        run: |
-          mkdir -p runtime
-          unzip -q judm-auto-shorts-v1.2.zip -d /tmp/judm
-          cp -a /tmp/judm/judm-auto-shorts-v1.2/. runtime/
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -78,25 +72,22 @@ jobs:
           'https://raw.githubusercontent.com/google/fonts/main/ofl/dohyeon/DoHyeon-Regular.ttf' \
           -o "$HOME/.local/share/fonts/DoHyeon-Regular.ttf"
           fc-cache -f
-          pip install -r runtime/requirements.txt
+          pip install -r requirements.txt
 
       - name: 연결 검사
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'doctor' }}
-        working-directory: runtime
         env:
           PYTHONPATH: src
         run: python -m judm_auto_shorts.doctor
 
       - name: 실제 자동 처리
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'process') }}
-        working-directory: runtime
         env:
           PYTHONPATH: src
         run: python -m judm_auto_shorts.pipeline
 
       - name: 편집 테스트
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'preview' }}
-        working-directory: runtime
         env:
           PYTHONPATH: src
         run: python -m judm_auto_shorts.preview
@@ -106,5 +97,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: judm-preview
-          path: runtime/out/edited/*.mp4
+          path: out/edited/*.mp4
           retention-days: 7
