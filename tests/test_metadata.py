@@ -17,7 +17,7 @@ def test_metadata_uses_creative_result_not_filename_random_hook():
     }
     meta = make_metadata("BLINE_run.mp4", creative)
     assert meta.hook == "이거다."
-    assert "이건 좀 시원했다" in meta.youtube_title
+    assert "한 번에 정리됐다" in meta.youtube_title
     text = " ".join(
         [
             meta.youtube_title,

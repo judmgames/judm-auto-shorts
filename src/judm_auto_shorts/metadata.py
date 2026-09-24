@@ -38,18 +38,18 @@ def detect_game(name: str) -> str:
 
 def _scene_copy(style: str, clear_drop: float) -> tuple[str, str]:
     if style == "RESCUE":
-        return "한 칸이 살렸네", "거의 막혔는데 한 수로 열렸다."
+        return "여기서 살았다", "막히던 판이 한 수로 열렸다."
     if style == "CLEAR":
         if clear_drop >= 0.24:
-            return "이건 좀 시원했다", "한 번에 정리되는 순간."
-        return "여기서 딱 풀렸다", "막히던 판이 여기서 풀렸다."
+            return "한 번에 정리됐다", "한 번에 크게 정리된 장면."
+        return "여기서 풀렸다", "막히던 판이 여기서 풀렸다."
     if style == "FEVER":
-        return "여기서 터짐", "분위기가 바뀌는 순간."
+        return "왔다", "플레이 흐름이 바뀐 순간."
     if style == "MISTAKE":
-        return "아, 여기서 꼬였네", "다시 보니까 여기였다."
+        return "여기서 꼬였다", "다시 보니 여기였다."
     if style == "ASMR":
-        return "이 장면은 소리까지 좋다", "말보다 플레이가 더 잘 보이는 장면."
-    return "이 장면은 남겼다", "플레이에서 제일 변화가 컸던 순간."
+        return "그냥 이 장면", "말 없이 보기 좋은 플레이."
+    return "플레이 한 장면", "가장 변화가 컸던 순간."
 
 
 def make_metadata(filename: str, creative: dict | None = None) -> Metadata:

@@ -257,17 +257,29 @@ def plan_from_signals(game_key: str, signals: dict[str, np.ndarray], duration: f
     # sustained audiovisual POP feedback.
     bline_pop = bool(game_key == "BLINE" and bline_pop_like[idx])
     if clear_drop >= 0.08 or bline_pop:
-        style = "CLEAR"
-        if clear_drop >= 0.20:
-            lead, payoff_text = "이거다.", "한 번에."
-        elif bline_pop:
-            lead, payoff_text = "", "됐다."
+        rescue_like = (
+            game_key == "BLINE"
+            and 0.10 <= clear_drop < 0.20
+            and db >= 0.70
+            and da <= 0.60
+        )
+        if rescue_like:
+            style = "RESCUE"
+            lead, payoff_text = "여기.", "살았다."
         else:
-            lead, payoff_text = "여기.", "됐다."
+            style = "CLEAR"
+            if clear_drop >= 0.20:
+                lead, payoff_text = "", "한 번에."
+            elif bline_pop:
+                lead, payoff_text = "", "됐다."
+            else:
+                lead, payoff_text = "여기.", "됐다."
         pre, target = 5.8, 9.0
     elif game_key == "PN37" and peak_event >= 0.48 and max(peak_flash, peak_audio) >= 0.45:
+        # We can verify a strong fever-like audiovisual event, but without OCR
+        # we cannot honestly claim the visible counter is 36 or 37.
         style = "FEVER"
-        lead, payoff_text = "하나만 더.", "됐다."
+        lead, payoff_text = "", "왔다."
         pre, target = 5.2, 8.5
     elif peak_event >= 0.43:
         style = "ASMR"

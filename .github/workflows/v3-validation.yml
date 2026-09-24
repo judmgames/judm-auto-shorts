@@ -39,17 +39,18 @@ jobs:
           PYTHONPATH: src
         run: pytest -q
 
-      - name: Render real Drive preview
+      - name: Render two real Drive previews
         env:
           PYTHONPATH: src
         run: |
-          python -m judm_auto_shorts.preview | tee preview-result.json
+          JUDM_PREVIEW_INDEX=0 python -m judm_auto_shorts.preview | tee preview-result-0.json
+          JUDM_PREVIEW_INDEX=1 python -m judm_auto_shorts.preview | tee preview-result-1.json
 
-      - name: Upload V3 preview
+      - name: Upload V3 previews
         uses: actions/upload-artifact@v4
         with:
           name: judm-v3-preview
           path: |
             out/edited/*.mp4
-            preview-result.json
+            preview-result-*.json
           retention-days: 7

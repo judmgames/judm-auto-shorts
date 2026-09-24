@@ -42,8 +42,8 @@ def test_pn37_flash_audio_becomes_fever():
     s["density"][:] = 0.42
     plan = plan_from_signals("PN37", s, duration=12.0)
     assert plan.style == "FEVER"
-    assert plan.lead_text == "하나만 더."
-    assert plan.payoff_text == "됐다."
+    assert plan.lead_text == ""
+    assert plan.payoff_text == "왔다."
 
 
 def test_dead_video_rejected():
