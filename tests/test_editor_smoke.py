@@ -18,7 +18,11 @@ def test_editor_smoke(tmp_path, filename):
             "ffmpeg", "-y", "-v", "error",
             "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30",
             "-f", "lavfi", "-i", "sine=frequency=700:sample_rate=48000",
-            "-t", "6", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-vf",
+            "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:"
+            "enable='between(t,5.0,5.28)'",
+            "-af", "volume=4:enable='between(t,5.0,5.32)'",
+            "-t", "10", "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-c:a", "aac", str(src),
         ],
         check=True,
