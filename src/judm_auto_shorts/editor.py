@@ -96,6 +96,74 @@ def _draw_text(stream: str, out: str, text: str, start: float, end: float, font_
     )
 
 
+def _editorial_zoom_window(
+    plan: CreativePlan,
+    payoff: float,
+    duration: float,
+) -> tuple[float, float, float, float]:
+    treatment = str(plan.treatment or "CLEAN").upper()
+    strength = max(0.0, min(0.18, float(plan.zoom_strength)))
+
+    if treatment == "BUILD":
+        start = max(0.0, payoff - 1.65)
+        peak = min(duration, payoff + 0.04)
+        end = min(duration, payoff + 0.72)
+        strength = min(strength, 0.12)
+    elif treatment == "PUNCH":
+        start = max(0.0, payoff - 0.22)
+        peak = min(duration, payoff + 0.04)
+        end = min(duration, payoff + 0.42)
+        strength = max(0.10, strength)
+    elif treatment == "REVEAL":
+        start = max(0.0, payoff - 0.38)
+        peak = min(duration, payoff + 0.06)
+        end = min(duration, payoff + 0.58)
+        strength = max(0.09, strength)
+    elif treatment == "RHYTHM":
+        start = max(0.0, payoff - 0.62)
+        peak = min(duration, payoff + 0.02)
+        end = min(duration, payoff + 0.64)
+        strength = min(strength, 0.045)
+    else:
+        start = max(0.0, payoff - 0.46)
+        peak = min(duration, payoff + 0.02)
+        end = min(duration, payoff + 0.48)
+        strength = min(strength, 0.035)
+
+    if peak <= start:
+        peak = min(duration, start + 0.08)
+    if end <= peak:
+        end = min(duration, peak + 0.12)
+    return start, peak, end, strength
+
+
+def _editorial_zoom_factor(
+    plan: CreativePlan,
+    payoff: float,
+    duration: float,
+    cold: float,
+    replay: bool,
+) -> str:
+    start, peak, end, strength = _editorial_zoom_window(
+        plan, payoff, duration
+    )
+    rise = max(peak - start, 0.04)
+    fall = max(end - peak, 0.04)
+    envelope = (
+        f"min(min(1,max(0,(t-{start:.3f})/{rise:.3f})),"
+        f"min(1,max(0,({end:.3f}-t)/{fall:.3f})))"
+    )
+    factor = f"1+{strength:.3f}*({envelope})"
+    if cold:
+        factor += f"+0.055*between(t,0,{cold:.3f})"
+    if replay:
+        replay_start = max(0.0, duration - 0.70)
+        factor += (
+            f"+0.025*between(t,{replay_start:.3f},{duration:.3f})"
+        )
+    return factor
+
+
 def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> str:
     src, dst = Path(src), Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -138,19 +206,12 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
 
     final_payoff = cold + plan.payoff_at
     final_duration = cold + plan.duration + replay_len
-    zoom_start = max(0.0, final_payoff - 0.34)
-    zoom_end = min(final_duration, final_payoff + 0.52)
-    cold_expr = f"+0.06*between(t,0,{cold:.2f})" if cold else ""
-    replay_expr = (
-        f"+0.04*between(t,{plan.duration:.2f},{final_duration:.2f})"
-        if replay
-        else ""
-    )
-    punch = max(0.05, min(0.18, float(plan.zoom_strength)))
-    factor = (
-        f"1{cold_expr}"
-        f"+{punch:.3f}*between(t,{zoom_start:.2f},{zoom_end:.2f})"
-        f"{replay_expr}"
+    factor = _editorial_zoom_factor(
+        plan,
+        final_payoff,
+        final_duration,
+        cold,
+        replay,
     )
 
     aspect = p.width / max(p.height, 1)

@@ -1236,6 +1236,18 @@ def _semantic_alignment_score(candidate: EventCandidate, hint) -> float:
     return score
 
 
+def _choose_semantic_ranked(ranked):
+    if not ranked:
+        return None
+    verified = [
+        item
+        for item in ranked
+        if bool(getattr(item[2], "available", False))
+    ]
+    pool = verified or ranked
+    return max(pool, key=lambda item: item[0])
+
+
 def analyze_creative(
     path: str | Path,
     game_key: str,
@@ -1264,9 +1276,9 @@ def analyze_creative(
                 ranked.append(
                     (_semantic_alignment_score(candidate, hint), candidate, hint)
                 )
-            if ranked:
-                ranked.sort(key=lambda item: item[0], reverse=True)
-                _, winner, preferred_hint = ranked[0]
+            chosen = _choose_semantic_ranked(ranked)
+            if chosen is not None:
+                _, winner, preferred_hint = chosen
                 preferred_signature = _candidate_signature(winner)
     except Exception:
         preferred_signature = None

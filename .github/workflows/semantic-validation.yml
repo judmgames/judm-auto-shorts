@@ -47,10 +47,10 @@ jobs:
           pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements-semantic.txt
 
-      - name: Run semantic unit tests
+      - name: Run full V4 test suite
         env:
           PYTHONPATH: src
-        run: pytest -q tests/test_semantic.py tests/test_director_generic.py tests/test_director_human_editing.py
+        run: pytest -q
       - name: Render one real semantic preview
         env:
           PYTHONPATH: src

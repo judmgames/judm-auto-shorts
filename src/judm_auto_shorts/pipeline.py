@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 
 from .config import Settings
-from .creative import CreativeReject
+from .creative import CreativeReject, SemanticUnavailable
 from .editor import auto_edit, probe
 from .hosting.cloudinary_host import delete_video, upload_video
 from .metadata import make_metadata
@@ -192,6 +192,11 @@ def process_one() -> dict:
             result.update(status="posted", missing_after=[])
         return result
 
+    except SemanticUnavailable as exc:
+        msg = ("SemanticHold:" + str(exc))[:115]
+        drive.set_props(f["id"], judm_state="semantic_hold", judm_error=msg)
+        result.update(status="semantic_hold", error=msg)
+        return result
     except CreativeReject as exc:
         msg = ("CreativeReject:" + str(exc))[:115]
         drive.set_props(f["id"], judm_state="creative_reject", judm_error=msg)
