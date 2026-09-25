@@ -4,6 +4,7 @@ import pytest
 from judm_auto_shorts.director import (
     CreativeReject,
     _apply_semantic_hint,
+    _final_director_gate,
     plan_from_signals,
 )
 from judm_auto_shorts.semantic import SemanticHint, parse_semantic_response
@@ -214,3 +215,32 @@ def test_semantic_chain_overrides_registered_clear_profile():
     assert updated.hook_strategy == "FLOW"
     assert updated.lead_text == ""
     assert updated.payoff_text == ""
+
+
+def test_final_director_gate_strips_explanatory_copy_from_rhythm():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 0.95
+    s["scene"][i] = 0.40
+    s["audio"][i] = 0.85
+    s["flash"][i] = 0.40
+    plan = plan_from_signals("GENERIC", s, duration=20.0)
+    plan = plan.__class__(**{**plan.to_dict(), "style": "RHYTHM", "lead_text": "여기.", "payoff_text": "됐다."})
+    gated = _final_director_gate(plan)
+    assert gated.lead_text == ""
+    assert gated.payoff_text == ""
+
+
+def test_final_director_gate_rejects_unclear_story():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.62
+    s["audio"][i] = 1.0
+    s["flash"][i] = 0.85
+    s["density"][:i] = 0.78
+    s["density"][i + 1:] = 0.46
+    plan = plan_from_signals("GENERIC", s, duration=20.0)
+    plan = plan.__class__(**{**plan.to_dict(), "story_clarity": 0.20})
+    with pytest.raises(CreativeReject, match="story too unclear"):
+        _final_director_gate(plan)

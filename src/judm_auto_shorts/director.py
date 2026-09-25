@@ -1110,6 +1110,62 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
     )
 
 
+
+def _final_director_gate(plan: CreativePlan) -> CreativePlan:
+    """Final editorial judgement before rendering.
+
+    The detector may find motion and the semantic model may identify a story,
+    but a human editor would still refuse an unclear, contradictory or
+    over-explained cut.  This gate is game-agnostic and intentionally favors
+    no upload over a weak upload.
+    """
+    if plan.story_clarity < 0.36:
+        raise CreativeReject(
+            f"director gate: story too unclear ({plan.story_clarity:.3f})"
+        )
+
+    if plan.semantic_used:
+        if plan.semantic_scene in {"menu", "loading"}:
+            raise CreativeReject(
+                f"director gate: non-gameplay semantic scene {plan.semantic_scene}"
+            )
+        if (
+            plan.semantic_confidence >= 0.72
+            and plan.semantic_scene == "result"
+            and plan.payoff_at < 0.8
+        ):
+            raise CreativeReject("director gate: result screen without setup")
+
+    # Flow/satisfaction edits should feel observed rather than narrated.
+    if plan.style in {"ASMR", "RHYTHM"}:
+        plan = replace(plan, lead_text="", payoff_text="")
+
+    # Failure/impact stories are easy to mis-caption.  Let the visible action
+    # carry the story unless semantics explicitly prove a successful outcome.
+    if plan.style in {"FAIL", "NEAR_FAIL", "IMPACT"} and (
+        not plan.semantic_used or plan.semantic_outcome != "success"
+    ):
+        plan = replace(plan, lead_text="", payoff_text="")
+
+    # If semantics changed the treatment, do not keep an unsupported payoff
+    # caption from the deterministic profile layer.
+    if (
+        plan.semantic_used
+        and plan.semantic_confidence >= 0.68
+        and plan.semantic_event in {"chain", "impact", "danger"}
+    ):
+        plan = replace(plan, lead_text="", payoff_text="")
+
+    final_len = plan.duration + plan.cold_open_duration + (
+        plan.replay_duration if plan.replay else 0.0
+    )
+    if final_len > 15.5:
+        plan = replace(plan, replay=False, replay_duration=0.0)
+    if final_len < 5.0:
+        raise CreativeReject("director gate: final story is too short")
+    return plan
+
+
 def _semantic_alignment_score(candidate: EventCandidate, hint) -> float:
     score = float(candidate.score)
     if not bool(getattr(hint, "available", False)):
@@ -1201,7 +1257,7 @@ def analyze_creative(
         from .semantic import analyze_semantic, semantic_enabled, semantic_required
 
         if not semantic_enabled():
-            return plan
+            return _final_director_gate(plan)
         if preferred_hint is None or (
             preferred_signature is not None
             and plan.signature != preferred_signature
@@ -1217,14 +1273,14 @@ def analyze_creative(
             raise SemanticUnavailable(
                 f"semantic director required but unavailable: {reason}"
             )
-        return _apply_semantic_hint(plan, preferred_hint)
+        return _final_director_gate(_apply_semantic_hint(plan, preferred_hint))
     except SemanticUnavailable:
         raise
     except CreativeReject:
         raise
     except Exception as exc:
-        return replace(
+        return _final_director_gate(replace(
             plan,
             semantic_reason=f"fallback:{type(exc).__name__}",
             reason=plan.reason + f", semantic_fallback={type(exc).__name__}",
-        )
+        ))
