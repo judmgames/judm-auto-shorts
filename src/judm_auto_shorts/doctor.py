@@ -10,8 +10,20 @@ def main():
     for p in s.targets:
         if not s.enabled(p): continue
         if p=="youtube":
-            for k in ("GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET","GOOGLE_REFRESH_TOKEN"):
-                if not os.getenv(k): issues.append(f"youtube enabled but {k} missing")
+            required=("GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET","GOOGLE_REFRESH_TOKEN")
+            missing=[k for k in required if not os.getenv(k)]
+            for k in missing:
+                issues.append(f"youtube enabled but {k} missing")
+            if not missing:
+                try:
+                    from google.auth.transport.requests import Request
+                    from .publishers.youtube import creds as youtube_creds
+                    c=youtube_creds()
+                    c.refresh(Request())
+                    if not c.valid:
+                        issues.append("youtube credential refresh returned invalid credentials")
+                except Exception as exc:
+                    issues.append(f"youtube credential refresh failed: {type(exc).__name__}")
         if p=="instagram":
             for k in ("INSTAGRAM_USER_ID","INSTAGRAM_ACCESS_TOKEN","CLOUDINARY_CLOUD_NAME","CLOUDINARY_API_KEY","CLOUDINARY_API_SECRET"):
                 if not os.getenv(k): issues.append(f"instagram enabled but {k} missing")

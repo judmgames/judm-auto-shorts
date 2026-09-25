@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/creative-engine-v3
+      - main
   workflow_dispatch:
 
 permissions:
@@ -30,7 +31,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fontconfig fonts-noto-cjk
           mkdir -p "$HOME/.local/share/fonts"
-          curl -fsSL             'https://raw.githubusercontent.com/google/fonts/main/ofl/dohyeon/DoHyeon-Regular.ttf'             -o "$HOME/.local/share/fonts/DoHyeon-Regular.ttf"
+          curl -fsSL 'https://raw.githubusercontent.com/google/fonts/main/ofl/dohyeon/DoHyeon-Regular.ttf' -o "$HOME/.local/share/fonts/DoHyeon-Regular.ttf"
           fc-cache -f
           pip install -r requirements.txt
 
@@ -39,7 +40,19 @@ jobs:
           PYTHONPATH: src
         run: pytest -q
 
+      - name: Validate production YouTube credentials
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          PYTHONPATH: src
+          TARGET_PLATFORMS: youtube
+          YOUTUBE_ENABLED: ${{ vars.YOUTUBE_ENABLED }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+        run: python -m judm_auto_shorts.doctor
+
       - name: Render two real Drive previews
+        if: ${{ github.ref != 'refs/heads/main' }}
         env:
           PYTHONPATH: src
         run: |
@@ -47,6 +60,7 @@ jobs:
           JUDM_PREVIEW_INDEX=1 python -m judm_auto_shorts.preview | tee preview-result-1.json
 
       - name: Upload V3 previews
+        if: ${{ github.ref != 'refs/heads/main' }}
         uses: actions/upload-artifact@v4
         with:
           name: judm-v3-preview
