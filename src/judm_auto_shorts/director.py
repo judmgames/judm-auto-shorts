@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import cv2
@@ -77,6 +77,12 @@ class CreativePlan:
     replay: bool
     replay_duration: float
     reason: str = ""
+    semantic_used: bool = False
+    semantic_scene: str = "unknown"
+    semantic_event: str = "unknown"
+    semantic_outcome: str = "unknown"
+    semantic_confidence: float = 0.0
+    semantic_reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -827,6 +833,122 @@ def plan_from_signals(
     )
 
 
+def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
+    reason = getattr(hint, "reason", "") or "unknown"
+    available = bool(getattr(hint, "available", False))
+    scene = getattr(hint, "scene", "unknown")
+    event = getattr(hint, "event", "unknown")
+    outcome = getattr(hint, "outcome", "unknown")
+    confidence = float(getattr(hint, "confidence", 0.0) or 0.0)
+
+    base = replace(
+        plan,
+        semantic_used=available,
+        semantic_scene=scene,
+        semantic_event=event,
+        semantic_outcome=outcome,
+        semantic_confidence=round(confidence, 3),
+        semantic_reason=reason,
+    )
+    if not available:
+        return base
+
+    if confidence >= 0.80 and scene in {"menu", "loading"}:
+        raise CreativeReject(
+            f"semantic gate rejected non-gameplay scene: {scene}"
+        )
+
+    if confidence < 0.60:
+        return replace(
+            base,
+            reason=plan.reason + f", semantic=observe:{scene}/{event}/{outcome}",
+        )
+
+    new_style = plan.style
+    new_treatment = plan.treatment
+    new_hook = plan.hook_strategy
+    new_zoom = plan.zoom_strength
+    new_cold = plan.cold_open
+    new_cold_len = plan.cold_open_duration
+    new_replay = plan.replay
+    new_replay_duration = plan.replay_duration
+    lead_text = plan.lead_text
+    payoff_text = plan.payoff_text
+    clarity = plan.story_clarity
+    if plan.game_key == "GENERIC":
+        if event == "clear" and outcome in {"success", "recovery"}:
+            new_style = "CLEAR"
+            new_treatment = "REVEAL"
+            new_zoom = max(new_zoom, 0.13)
+            new_cold = True
+            new_cold_len = max(new_cold_len, 0.44)
+            new_replay = False
+            new_replay_duration = 0.0
+            new_hook = "PAYOFF_FIRST"
+            clarity = min(1.0, clarity + 0.08)
+        elif event == "danger" and outcome == "recovery":
+            new_style = "TURNAROUND"
+            new_treatment = "REVEAL"
+            new_zoom = max(new_zoom, 0.13)
+            new_cold = True
+            new_cold_len = max(new_cold_len, 0.42)
+            new_replay = False
+            new_replay_duration = 0.0
+            new_hook = "PAYOFF_FIRST"
+            clarity = min(1.0, clarity + 0.07)
+        elif event == "chain":
+            if new_style not in {"CLEAR", "TURNAROUND"}:
+                new_style = "RHYTHM"
+                new_treatment = "RHYTHM"
+                new_hook = "FLOW"
+                new_cold = False
+                new_cold_len = 0.0
+                new_replay = False
+                new_replay_duration = 0.0
+                clarity = min(1.0, clarity + 0.05)
+        elif event == "impact" and new_style in {"ASMR", "BUILDUP"}:
+            new_style = "IMPACT"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.12)
+            new_hook = "ACTION_FIRST"
+            clarity = min(1.0, clarity + 0.04)
+
+        if outcome == "failure" and new_style == "CLEAR":
+            new_style = "IMPACT"
+            new_treatment = "PUNCH"
+            lead_text = ""
+            payoff_text = ""
+            new_hook = "ACTION_FIRST"
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = False
+            new_replay_duration = 0.0
+
+    signature = plan.signature
+    if new_style != plan.style and ":" in signature:
+        signature = new_style + ":" + signature.split(":", 1)[1]
+
+    semantic_note = (
+        f"{scene}/{event}/{outcome}:{confidence:.2f}"
+    )
+    return replace(
+        base,
+        style=new_style,
+        treatment=new_treatment,
+        hook_strategy=new_hook,
+        zoom_strength=round(float(new_zoom), 3),
+        cold_open=new_cold,
+        cold_open_duration=round(float(new_cold_len), 3),
+        replay=new_replay,
+        replay_duration=round(float(new_replay_duration), 3),
+        lead_text=lead_text,
+        payoff_text=payoff_text,
+        story_clarity=round(float(clarity), 3),
+        signature=signature,
+        reason=plan.reason + f", semantic={semantic_note}",
+    )
+
+
 def analyze_creative(
     path: str | Path,
     game_key: str,
@@ -835,10 +957,27 @@ def analyze_creative(
     avoid_signatures: set[str] | None = None,
 ) -> CreativePlan:
     signals = sample_signals(path, game_key)
-    return plan_from_signals(
+    plan = plan_from_signals(
         game_key,
         signals,
         duration,
         avoid_styles=avoid_styles,
         avoid_signatures=avoid_signatures,
     )
+
+    try:
+        from .semantic import analyze_semantic
+
+        hint = analyze_semantic(
+            path,
+            plan.start + plan.payoff_at,
+        )
+        return _apply_semantic_hint(plan, hint)
+    except CreativeReject:
+        raise
+    except Exception as exc:
+        return replace(
+            plan,
+            semantic_reason=f"fallback:{type(exc).__name__}",
+            reason=plan.reason + f", semantic_fallback={type(exc).__name__}",
+        )
