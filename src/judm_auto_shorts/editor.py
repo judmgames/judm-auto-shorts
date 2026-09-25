@@ -104,12 +104,31 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
 
     payoff_abs = plan.start + plan.payoff_at
     cold = plan.cold_open_duration if plan.cold_open else 0.0
+    replay = bool(plan.replay and plan.replay_duration > 0 and not cold)
+    replay_len = 0.0
+    replay_src_start = 0.0
+    if replay:
+        replay_src_start = max(plan.start, payoff_abs - plan.replay_duration * 0.42)
+        replay_len = min(
+            float(plan.replay_duration),
+            max(0.0, p.duration - replay_src_start),
+        )
+        if replay_len < 0.25:
+            replay = False
+            replay_len = 0.0
+
     if cold:
         cold_start = max(0.0, min(payoff_abs - 0.14, max(0.0, p.duration - cold)))
         seq = (
             f"[0:v]trim=start={cold_start:.3f}:duration={cold:.3f},setpts=PTS-STARTPTS[coldv];"
             f"[0:v]trim=start={plan.start:.3f}:duration={plan.duration:.3f},setpts=PTS-STARTPTS[mainv];"
             f"[coldv][mainv]concat=n=2:v=1:a=0[seqv]"
+        )
+    elif replay:
+        seq = (
+            f"[0:v]trim=start={plan.start:.3f}:duration={plan.duration:.3f},setpts=PTS-STARTPTS[mainv];"
+            f"[0:v]trim=start={replay_src_start:.3f}:duration={replay_len:.3f},setpts=PTS-STARTPTS[replayv];"
+            f"[mainv][replayv]concat=n=2:v=1:a=0[seqv]"
         )
     else:
         seq = (
@@ -118,12 +137,21 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
         )
 
     final_payoff = cold + plan.payoff_at
-    final_duration = cold + plan.duration
+    final_duration = cold + plan.duration + replay_len
     zoom_start = max(0.0, final_payoff - 0.34)
     zoom_end = min(final_duration, final_payoff + 0.52)
     cold_expr = f"+0.06*between(t,0,{cold:.2f})" if cold else ""
+    replay_expr = (
+        f"+0.04*between(t,{plan.duration:.2f},{final_duration:.2f})"
+        if replay
+        else ""
+    )
     punch = max(0.05, min(0.18, float(plan.zoom_strength)))
-    factor = f"1{cold_expr}+{punch:.3f}*between(t,{zoom_start:.2f},{zoom_end:.2f})"
+    factor = (
+        f"1{cold_expr}"
+        f"+{punch:.3f}*between(t,{zoom_start:.2f},{zoom_end:.2f})"
+        f"{replay_expr}"
+    )
 
     aspect = p.width / max(p.height, 1)
     if aspect >= 1.20:
@@ -204,6 +232,17 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
                 f"afade=t=in:st=0:d=0.04,"
                 f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
             )
+        elif replay:
+            fc += (
+                f";[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
+                f"asetpts=PTS-STARTPTS[maina];"
+                f"[0:a]atrim=start={replay_src_start:.3f}:duration={replay_len:.3f},"
+                f"asetpts=PTS-STARTPTS[replaya];"
+                f"[maina][replaya]concat=n=2:v=0:a=1,"
+                f"volume={audio_boost:.2f}:enable='between(t,{boost_start:.2f},{boost_end:.2f})',"
+                f"afade=t=in:st=0:d=0.04,"
+                f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
+            )
         else:
             fc += (
                 f";[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
@@ -257,13 +296,18 @@ def auto_edit(
     out_dir: str | Path,
     meta_or_game,
     avoid_styles: set[str] | None = None,
+    avoid_signatures: set[str] | None = None,
 ) -> dict:
     p = probe(src)
     if p.duration < 2 or p.width < 240 or p.height < 240:
         raise ValueError(f"source video too small/short: {p}")
     game_key = getattr(meta_or_game, "game_key", str(meta_or_game))
     plan = analyze_creative(
-        src, game_key, p.duration, avoid_styles=avoid_styles
+        src,
+        game_key,
+        p.duration,
+        avoid_styles=avoid_styles,
+        avoid_signatures=avoid_signatures,
     )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)

@@ -42,6 +42,12 @@ class EventCandidate:
     focus_x: float
     focus_y: float
     focus_confidence: float
+    story_clarity: float
+    contrast: float
+    sync: float
+    menu_risk: float
+    pre_level: float
+    post_level: float
 @dataclass(frozen=True)
 class CreativePlan:
     game_key: str
@@ -66,6 +72,10 @@ class CreativePlan:
     candidate_count: int
     alternates: tuple[str, ...]
     signature: str
+    story_clarity: float
+    hook_strategy: str
+    replay: bool
+    replay_duration: float
     reason: str = ""
 
     def to_dict(self) -> dict:
@@ -256,16 +266,19 @@ def _build_candidates(
     density = signals["density"]
     audio = signals["audio"]
     locality = signals["locality"]
+    profile = get_profile(game_key)
     step = float(np.median(np.diff(t))) if len(t) > 1 else 1 / 6
     radius = max(2, int(round(0.9 / max(step, 1e-3))))
 
     event = np.clip(
-        0.34 * motion + 0.20 * scene + 0.22 * audio + 0.12 * flash
-        + 0.12 * (motion * locality),
+        0.32 * motion + 0.18 * scene + 0.22 * audio + 0.12 * flash
+        + 0.16 * (motion * locality),
         0, 1,
     )
     if len(event) >= 5:
-        event = 0.72 * event + 0.28 * np.convolve(event, np.ones(5) / 5, mode="same")
+        event = 0.70 * event + 0.30 * np.convolve(
+            event, np.ones(5) / 5, mode="same"
+        )
 
     if duration >= 60:
         end_guard = 8.0
@@ -282,69 +295,168 @@ def _build_candidates(
     indexes = _candidate_indexes(event, valid, min_gap)
     candidates: list[EventCandidate] = []
     for i in indexes:
-        pre_near = _segment_mean(event, i - radius * 2, i, float(event[i]))
-        pre_far = _segment_mean(event, i - radius * 5, i - radius * 2, pre_near)
-        post = _segment_mean(event, i + 1, i + radius * 3, float(event[i]))
-        before_d = _segment_mean(density, i - radius * 2, i, float(density[i]))
-        after_d = _segment_mean(density, i + radius, i + radius * 4, float(density[i]))
+        pre_near = _segment_mean(
+            event, i - radius * 2, i, float(event[i])
+        )
+        pre_far = _segment_mean(
+            event, i - radius * 5, i - radius * 2, pre_near
+        )
+        post = _segment_mean(
+            event, i + 1, i + radius * 3, float(event[i])
+        )
+        before_d = _segment_mean(
+            density, i - radius * 2, i, float(density[i])
+        )
+        after_d = _segment_mean(
+            density, i + radius, i + radius * 4, float(density[i])
+        )
         relief = max(0.0, before_d - after_d)
         buildup = max(0.0, pre_near - pre_far)
-        sustained = _segment_mean(event, i - radius, i + radius + 1, float(event[i]))
+        sustained = _segment_mean(
+            event, i - radius, i + radius + 1, float(event[i])
+        )
         unwind = max(0.0, pre_near - post)
         sync = float(0.5 * audio[i] + 0.5 * flash[i])
         loc = float(locality[i])
-        local_window = event[max(0, i - radius * 3):min(len(event), i + radius * 3 + 1)]
-        peak_count = int(np.sum(
-            (local_window[1:-1] >= local_window[:-2])
-            & (local_window[1:-1] >= local_window[2:])
-            & (local_window[1:-1] >= 0.48)
-        )) if len(local_window) >= 3 else 0
+        contrast = float(
+            np.clip(
+                max(
+                    relief * 2.6,
+                    buildup * 1.8,
+                    unwind * 1.8,
+                    abs(pre_near - post),
+                ),
+                0,
+                1,
+            )
+        )
+        continuity = float(np.clip(1.0 - 0.45 * scene[i], 0, 1))
+        local_window = event[
+            max(0, i - radius * 3):min(len(event), i + radius * 3 + 1)
+        ]
+        peak_count = (
+            int(
+                np.sum(
+                    (local_window[1:-1] >= local_window[:-2])
+                    & (local_window[1:-1] >= local_window[2:])
+                    & (local_window[1:-1] >= 0.46)
+                )
+            )
+            if len(local_window) >= 3
+            else 0
+        )
+        rhythmic_strength = float(
+            np.clip((peak_count / 4.0) * (sustained / 0.5), 0, 1)
+        )
+        arc_strength = float(
+            np.clip(
+                max(
+                    relief / 0.20,
+                    buildup / 0.24,
+                    unwind / 0.24,
+                    rhythmic_strength,
+                ),
+                0,
+                1,
+            )
+        )
+
+        menu_risk = 0.0
+        if float(scene[i]) > 0.88 and loc < 0.22 and post < 0.10:
+            menu_risk = 0.40
+        elif float(scene[i]) > 0.80 and loc < 0.30 and post < 0.14:
+            menu_risk = 0.18
+
+        story_clarity = float(
+            np.clip(
+                0.24 * float(event[i])
+                + 0.17 * sync
+                + 0.18 * arc_strength
+                + 0.13 * loc
+                + 0.11 * sustained
+                + 0.08 * continuity
+                + 0.09 * contrast,
+                0,
+                1,
+            )
+        )
 
         style = "IMPACT"
-        story = 0.46 * float(event[i]) + 0.22 * sync + 0.16 * sustained + 0.16 * loc
-        if relief >= 0.08:
+        if relief >= 0.08 and float(event[i]) >= 0.40:
             style = "CLEAR"
-            story += min(relief / 0.22, 1.0) * 0.32
-        elif pre_near >= 0.44 and unwind >= 0.16 and float(event[i]) >= 0.52:
+        elif (
+            pre_near >= 0.38
+            and unwind >= 0.13
+            and float(event[i]) >= 0.42
+        ):
             style = "TURNAROUND"
-            story += 0.18 * pre_near + 0.20 * unwind
-        elif buildup >= 0.10 and float(event[i]) >= 0.48:
+        elif buildup >= 0.09 and float(event[i]) >= 0.42:
             style = "BUILDUP"
-            story += 0.24 * min(buildup / 0.28, 1.0)
-        elif peak_count >= 3 and sustained >= 0.34 and float(scene[i]) < 0.72:
+        elif (
+            peak_count >= 3
+            and sustained >= 0.32
+            and float(scene[i]) < 0.78
+        ):
             style = "RHYTHM"
-            story += 0.12 * min(peak_count / 5.0, 1.0)
-        elif float(event[i]) < 0.50 and sustained >= 0.30 and float(scene[i]) < 0.48:
+        elif (
+            float(event[i]) < 0.50
+            and sustained >= 0.28
+            and sync < 0.55
+            and float(scene[i]) < 0.50
+        ):
             style = "ASMR"
-            story += 0.08
-        if game_key == "BLINE":
-            fx_support = _segment_mean(
-                0.5 * flash + 0.5 * audio,
-                i - radius,
-                i + radius + 1,
-                0.0,
-            )
-            if relief >= 0.08 or (
-                float(event[i]) >= 0.62
-                and float(flash[i]) >= 0.60
-                and float(audio[i]) >= 0.50
-                and fx_support >= 0.42
-            ):
-                style = "CLEAR"
-                story += 0.16
-            elif style == "IMPACT":
-                # A single bright/audio spike is not enough to call a clear.
-                # Keep uncertain B.Line moments captionless.
-                style = "ASMR"
-        elif game_key == "PN37":
-            if float(event[i]) >= 0.52 and max(float(flash[i]), float(audio[i])) >= 0.50:
-                style = "FEVER"
-                story += 0.12
+        # Optional game profiles may improve confidence, but the universal
+        # story detector above remains the source of truth.
+        profile_bonus = 0.0
+        if (
+            profile.semantic_hint == "grid_clear"
+            and style in {"IMPACT", "BUILDUP", "RHYTHM"}
+            and float(event[i]) >= 0.58
+            and sync >= 0.52
+            and sustained >= 0.38
+        ):
+            style = "CLEAR"
+            profile_bonus = 0.06
+        elif (
+            profile.semantic_hint == "grid_clear"
+            and style == "IMPACT"
+            and relief < 0.08
+            and sustained < 0.38
+        ):
+            # A single flash/audio spike is not proof of a board clear.
+            style = "ASMR"
+        elif (
+            profile.semantic_hint == "merge_chain"
+            and style in {"IMPACT", "BUILDUP", "RHYTHM"}
+            and float(event[i]) >= 0.52
+            and sync >= 0.50
+        ):
+            style = "FEVER"
+            profile_bonus = 0.05
+        elif (
+            profile.semantic_hint == "runner"
+            and style in {"IMPACT", "TURNAROUND"}
+            and loc >= 0.45
+        ):
+            profile_bonus = 0.03
+        elif (
+            profile.semantic_hint == "battle"
+            and style == "IMPACT"
+            and sustained >= 0.34
+        ):
+            profile_bonus = 0.03
 
-        menu_penalty = 0.0
-        if float(scene[i]) > 0.88 and loc < 0.22 and post < 0.08:
-            menu_penalty = 0.34
-        story -= menu_penalty
+        story_clarity = float(
+            np.clip(story_clarity + profile_bonus, 0, 1)
+        )
+        story = (
+            0.58 * story_clarity
+            + 0.30 * float(event[i])
+            + 0.08 * sustained
+            + 0.04 * loc
+            - menu_risk
+        )
+
         fx, fy, fc = _weighted_focus(signals, i, radius)
         candidates.append(
             EventCandidate(
@@ -360,58 +472,158 @@ def _build_candidates(
                 focus_x=fx,
                 focus_y=fy,
                 focus_confidence=fc,
+                story_clarity=story_clarity,
+                contrast=contrast,
+                sync=sync,
+                menu_risk=menu_risk,
+                pre_level=float(pre_near),
+                post_level=float(post),
             )
         )
     candidates.sort(key=lambda c: c.score, reverse=True)
-    return candidates, {"event": event, "safe_end": np.array([safe_end], np.float32)}
+    return candidates, {
+        "event": event,
+        "safe_end": np.array([safe_end], np.float32),
+    }
+
+
 def _copy_for_candidate(game_key: str, c: EventCandidate) -> tuple[str, str]:
-    if game_key == "BLINE":
-        if c.style == "CLEAR":
-            if c.relief >= 0.18:
-                return "", "한 번에."
+    profile = get_profile(game_key)
+    if c.style == "CLEAR":
+        if c.relief >= 0.20:
+            return "", "한 번에."
+        if (
+            profile.semantic_hint == "grid_clear"
+            and (c.relief >= 0.08 or c.sync >= 0.56)
+        ):
             return "", "됐다."
-        if c.style == "TURNAROUND" and c.relief >= 0.10:
-            return "여기.", "살았다."
-        if c.style == "TURNAROUND":
-            return "", ""
-    if game_key == "PN37" and c.style == "FEVER":
+    if profile.semantic_hint == "merge_chain" and c.style == "FEVER":
         return "", "왔다."
-    if c.style == "CLEAR" and c.relief >= 0.20:
-        return "", "한 번에."
     return "", ""
 
 
-def _treatment_for(style: str, score: float) -> tuple[str, float, bool, float]:
-    if style in {"TURNAROUND", "CLEAR"}:
-        return "REVEAL", 0.16 if score >= 0.72 else 0.13, True, 0.52
-    if style == "FEVER":
-        return "PUNCH", 0.15, True, 0.46
-    if style == "BUILDUP":
-        return "BUILD", 0.12, False, 0.0
-    if style == "IMPACT":
-        return "PUNCH", 0.15 if score >= 0.70 else 0.12, score >= 0.72, 0.42
-    if style == "RHYTHM":
-        return "RHYTHM", 0.08, False, 0.0
-    return "CLEAN", 0.07, False, 0.0
+def _candidate_signature(c: EventCandidate) -> str:
+    zx = int(np.clip(c.focus_x * 3.0, 0, 2.999))
+    zy = int(np.clip(c.focus_y * 3.0, 0, 2.999))
+    strength = "H" if c.story_clarity >= 0.66 else "M"
+    return f"{c.style}:{zx}:{zy}:{strength}"
 
 
-def _timing_for(style: str) -> tuple[float, float]:
+def _treatment_for(
+    c: EventCandidate,
+) -> tuple[str, float, bool, float, bool, float, str]:
+    if c.style in {"TURNAROUND", "CLEAR"}:
+        cold = c.story_clarity >= 0.54 and c.score >= 0.50
+        return (
+            "REVEAL",
+            0.17 if c.story_clarity >= 0.68 else 0.13,
+            cold,
+            0.50 if cold else 0.0,
+            False,
+            0.0,
+            "PAYOFF_FIRST" if cold else "STORY_FIRST",
+        )
+    if c.style == "FEVER":
+        return "PUNCH", 0.15, True, 0.46, False, 0.0, "PAYOFF_FIRST"
+    if c.style == "BUILDUP":
+        return "BUILD", 0.12, False, 0.0, False, 0.0, "BUILD_TO_PAYOFF"
+    if c.style == "IMPACT":
+        replay = (
+            c.score >= 0.60
+            and c.story_clarity >= 0.55
+            and c.sync >= 0.55
+        )
+        cold = (not replay) and c.score >= 0.72
+        return (
+            "PUNCH",
+            0.17 if c.story_clarity >= 0.66 else 0.13,
+            cold,
+            0.42 if cold else 0.0,
+            replay,
+            0.56 if replay else 0.0,
+            "MICRO_REPLAY" if replay else ("PAYOFF_FIRST" if cold else "ACTION_FIRST"),
+        )
+    if c.style == "RHYTHM":
+        return "RHYTHM", 0.08, False, 0.0, False, 0.0, "FLOW"
+    return "CLEAN", 0.06, False, 0.0, False, 0.0, "CLEAN"
+
+
+def _timing_limits(style: str) -> tuple[float, float, float, float]:
     if style in {"CLEAR", "TURNAROUND"}:
-        return 5.2, 3.0
+        return 6.0, 2.0, 1.4, 3.4
     if style == "BUILDUP":
-        return 5.8, 2.7
+        return 7.0, 2.4, 1.3, 3.0
     if style == "FEVER":
-        return 4.8, 2.6
+        return 5.2, 1.8, 1.2, 2.8
     if style == "IMPACT":
-        return 3.8, 2.8
+        return 4.6, 1.6, 1.0, 2.4
     if style == "RHYTHM":
-        return 4.2, 4.0
-    return 4.0, 4.0
+        return 5.0, 1.8, 2.0, 4.2
+    return 4.8, 1.8, 1.6, 3.6
+
+
+def _smart_window(
+    best: EventCandidate,
+    t: np.ndarray,
+    event: np.ndarray,
+    safe_end: float,
+) -> tuple[float, float, str]:
+    pre_max, pre_min, post_min, post_max = _timing_limits(best.style)
+    smooth = event
+    if len(event) >= 3:
+        smooth = np.convolve(event, np.ones(3) / 3, mode="same")
+
+    pre_mask = (
+        (t >= max(0.0, best.time - pre_max))
+        & (t <= max(0.0, best.time - pre_min))
+    )
+    pre_idx = np.where(pre_mask)[0]
+    cut_reason = "fixed_fallback"
+    if len(pre_idx):
+        progress = np.linspace(0.0, 1.0, len(pre_idx), dtype=np.float32)
+        # Prefer a quiet beat, but among similar beats prefer the later cut.
+        cost = smooth[pre_idx] - 0.08 * progress
+        start_i = int(pre_idx[int(np.argmin(cost))])
+        start = max(0.0, float(t[start_i]) - 0.12)
+        cut_reason = "pre_event_valley"
+    else:
+        start = max(0.0, best.time - pre_max)
+
+    post_lo = best.time + post_min
+    post_hi = min(safe_end, best.time + post_max)
+    post_idx = np.where((t >= post_lo) & (t <= post_hi))[0]
+    end = post_hi
+    if len(post_idx):
+        settle_threshold = min(
+            0.24, max(0.11, 0.75 * best.post_level)
+        )
+        for idx in post_idx:
+            hi = min(len(smooth), idx + 3)
+            if float(np.mean(smooth[idx:hi])) <= settle_threshold:
+                end = min(safe_end, float(t[idx]) + 0.22)
+                cut_reason += "+post_settle"
+                break
+
+    min_duration = 5.2
+    max_duration = 13.0
+    if end - start < min_duration:
+        missing = min_duration - (end - start)
+        start = max(0.0, start - missing * 0.65)
+        end = min(safe_end, end + missing * 0.35)
+    if end - start > max_duration:
+        start = max(0.0, end - max_duration)
+    if best.time - start < 1.55:
+        start = max(0.0, best.time - 1.8)
+    end = max(end, min(safe_end, best.time + 1.0))
+    return start, max(0.0, end - start), cut_reason
+
+
 def plan_from_signals(
     game_key: str,
     signals: dict[str, np.ndarray],
     duration: float,
     avoid_styles: set[str] | None = None,
+    avoid_signatures: set[str] | None = None,
 ) -> CreativePlan:
     signals = dict(signals)
     t = signals["time"]
@@ -427,49 +639,125 @@ def plan_from_signals(
     candidates, extra = _build_candidates(game_key, signals, duration)
     if not candidates:
         raise CreativeReject("no candidate event")
-    best = candidates[0]
+
     avoid_styles = set(avoid_styles or ())
-    if best.style in avoid_styles:
+    avoid_signatures = set(avoid_signatures or ())
+    best = candidates[0]
+    if (
+        best.style in avoid_styles
+        or _candidate_signature(best) in avoid_signatures
+    ):
         for alternate in candidates[1:]:
             if (
                 alternate.style not in avoid_styles
-                and alternate.score >= best.score * 0.80
+                and _candidate_signature(alternate) not in avoid_signatures
+                and alternate.score >= best.score * 0.78
             ):
                 best = alternate
                 break
-    if best.score < 0.46 or best.event < 0.34:
+
+    if (
+        best.score < 0.44
+        or best.event < 0.32
+        or best.story_clarity < 0.34
+        or best.menu_risk >= 0.38
+    ):
         raise CreativeReject(
-            f"no director-worthy event: score={best.score:.3f}, event={best.event:.3f}"
+            "no director-worthy event: "
+            f"score={best.score:.3f}, event={best.event:.3f}, "
+            f"clarity={best.story_clarity:.3f}, menu={best.menu_risk:.3f}"
         )
 
-    pre, post = _timing_for(best.style)
+    event = extra["event"]
     safe_end = float(extra["safe_end"][0])
-    start = max(0.0, best.time - pre)
-    target = min(12.5, max(7.0, pre + post))
-    clip_duration = min(target, max(0.0, safe_end - start))
+    start, clip_duration, cut_reason = _smart_window(
+        best, t, event, safe_end
+    )
     if clip_duration < 4.5:
         raise CreativeReject("selected event too close to protected outro")
     payoff_at = best.time - start
-    if payoff_at < 1.8:
-        start = max(0.0, best.time - 2.6)
-        clip_duration = min(target, max(0.0, safe_end - start))
-        payoff_at = best.time - start
 
-    event = extra["event"]
+    (
+        treatment,
+        zoom,
+        cold_open,
+        cold_len,
+        replay,
+        replay_duration,
+        hook_strategy,
+    ) = _treatment_for(best)
+
+    if replay and clip_duration + replay_duration > 15.2:
+        replay = False
+        replay_duration = 0.0
+        hook_strategy = "ACTION_FIRST"
+
+    clip_end = start + clip_duration
     open_mask = (t >= start) & (t <= start + 1.2)
-    open_activity = float(np.mean(event[open_mask])) if np.any(open_mask) else 0.0
+    open_activity = (
+        float(np.mean(event[open_mask])) if np.any(open_mask) else 0.0
+    )
 
-    treatment, zoom, cold_open, cold_len = _treatment_for(best.style, best.score)
-    if not cold_open and open_activity < 0.10 and best.score < 0.62:
-        raise CreativeReject("first 1.2s would be visually dead")
+    if not cold_open and open_activity < 0.085:
+        # A human editor would not keep a dead establishing beat just because
+        # it is technically a clean cut. Tighten to the first visible rise
+        # close to the story, while preserving enough setup before payoff.
+        rise_mask = (
+            (t >= max(start, best.time - 3.2))
+            & (t <= max(start, best.time - 1.0))
+            & (event >= 0.10)
+        )
+        rise_idx = np.where(rise_mask)[0]
+        if len(rise_idx):
+            start = max(start, float(t[int(rise_idx[0])]) - 0.22)
+            if clip_end - start < 5.2:
+                clip_end = min(safe_end, start + 5.2)
+            clip_duration = max(0.0, clip_end - start)
+            payoff_at = best.time - start
+            open_mask = (t >= start) & (t <= start + 1.2)
+            open_activity = (
+                float(np.mean(event[open_mask])) if np.any(open_mask) else 0.0
+            )
+
+    if not cold_open and open_activity < 0.085:
+        # If the setup has no hook, promote a clearly verified payoff or a
+        # strong audiovisual impact. This is preferable to a dead opening,
+        # while still rejecting weak/ambiguous footage.
+        payoff_is_verified = (
+            best.style in {"CLEAR", "TURNAROUND"}
+            and (best.relief >= 0.08 or best.contrast >= 0.18)
+        )
+        impact_is_strong = best.event >= 0.55 and best.sync >= 0.48
+        if (
+            payoff_is_verified
+            or impact_is_strong
+            or (best.story_clarity >= 0.46 and best.score >= 0.48)
+        ):
+            cold_open = True
+            cold_len = 0.42
+            replay = False
+            replay_duration = 0.0
+            hook_strategy = "PAYOFF_FIRST"
+        else:
+            raise CreativeReject("first 1.2s would be visually dead")
 
     lead, payoff = _copy_for_candidate(game_key, best)
     lead, payoff = _safe_copy(lead), _safe_copy(payoff)
     density = signals["density"]
     step = float(np.median(np.diff(t))) if len(t) > 1 else 1 / 6
     radius = max(2, int(round(0.9 / max(step, 1e-3))))
-    db = _segment_mean(density, best.index - radius * 2, best.index, float(density[best.index]))
-    da = _segment_mean(density, best.index + radius, best.index + radius * 4, float(density[best.index]))
+    db = _segment_mean(
+        density,
+        best.index - radius * 2,
+        best.index,
+        float(density[best.index]),
+    )
+    da = _segment_mean(
+        density,
+        best.index + radius,
+        best.index + radius * 4,
+        float(density[best.index]),
+    )
     clear_drop = max(0.0, db - da)
 
     profile = get_profile(game_key)
@@ -479,20 +767,23 @@ def plan_from_signals(
 
     start_idx = int(np.searchsorted(t, min(best.time, start + 0.8)))
     start_idx = max(0, min(len(t) - 1, start_idx))
-    start_fx_roi, _, start_fc = _weighted_focus(signals, start_idx, radius)
+    start_fx_roi, _, start_fc = _weighted_focus(
+        signals, start_idx, radius
+    )
     if start_fc < 0.10:
         start_fx_roi = best.focus_x
     full_focus_start_x = x0 + start_fx_roi * (x1 - x0)
 
     focus_conf = max(best.focus_confidence, profile.min_focus_scale)
-    alt = tuple(f"{c.style}:{c.score:.2f}@{c.time:.1f}" for c in candidates[1:4])
-    signature = (
-        f"{best.style}:{round(best.time / 3.0)}:"
-        f"{round(best.focus_x, 1)}:{round(best.focus_y, 1)}"
+    alt = tuple(
+        f"{c.style}:{c.score:.2f}:{c.story_clarity:.2f}@{c.time:.1f}"
+        for c in candidates[1:4]
     )
-
-    bline_pop = bool(
-        game_key == "BLINE" and best.style == "CLEAR" and best.relief < 0.08
+    signature = _candidate_signature(best)
+    semantic_clear = bool(
+        profile.semantic_hint == "grid_clear"
+        and best.style == "CLEAR"
+        and best.relief < 0.08
     )
 
     return CreativePlan(
@@ -501,7 +792,7 @@ def plan_from_signals(
         start=round(float(start), 3),
         duration=round(float(clip_duration), 3),
         payoff_at=round(float(payoff_at), 3),
-        confidence=round(float(np.clip(best.score / 1.2, 0, 1)), 3),
+        confidence=round(float(np.clip(best.score / 1.0, 0, 1)), 3),
         density_before=round(db, 3),
         density_after=round(da, 3),
         clear_drop=round(clear_drop, 3),
@@ -510,7 +801,9 @@ def plan_from_signals(
         cold_open=cold_open,
         cold_open_duration=cold_len,
         treatment=treatment,
-        focus_start_x=round(float(np.clip(full_focus_start_x, 0.05, 0.95)), 3),
+        focus_start_x=round(
+            float(np.clip(full_focus_start_x, 0.05, 0.95)), 3
+        ),
         focus_x=round(float(np.clip(full_focus_x, 0.05, 0.95)), 3),
         focus_y=round(float(np.clip(full_focus_y, 0.05, 0.95)), 3),
         focus_confidence=round(float(np.clip(focus_conf, 0, 1)), 3),
@@ -518,11 +811,18 @@ def plan_from_signals(
         candidate_count=len(candidates),
         alternates=alt,
         signature=signature,
+        story_clarity=round(float(best.story_clarity), 3),
+        hook_strategy=hook_strategy,
+        replay=replay,
+        replay_duration=round(float(replay_duration), 3),
         reason=(
-            f"director={best.style}, score={best.score:.3f}, event={best.event:.3f}, "
+            f"director={best.style}, treatment={treatment}, "
+            f"hook={hook_strategy}, score={best.score:.3f}, "
+            f"clarity={best.story_clarity:.3f}, event={best.event:.3f}, "
+            f"contrast={best.contrast:.3f}, sync={best.sync:.3f}, "
             f"buildup={best.buildup:.3f}, relief={best.relief:.3f}, "
             f"sustain={best.sustained:.3f}, locality={best.locality:.3f}, "
-            f"bline_pop={int(bline_pop)}"
+            f"cut={cut_reason}, semantic_clear={int(semantic_clear)}"
         ),
     )
 
@@ -532,8 +832,13 @@ def analyze_creative(
     game_key: str,
     duration: float,
     avoid_styles: set[str] | None = None,
+    avoid_signatures: set[str] | None = None,
 ) -> CreativePlan:
     signals = sample_signals(path, game_key)
     return plan_from_signals(
-        game_key, signals, duration, avoid_styles=avoid_styles
+        game_key,
+        signals,
+        duration,
+        avoid_styles=avoid_styles,
+        avoid_signatures=avoid_signatures,
     )

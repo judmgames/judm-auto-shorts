@@ -121,4 +121,4 @@ def test_bline_sustained_pop_feedback_is_clear():
     plan = plan_from_signals("BLINE", s, duration=16.0)
     assert plan.style == "CLEAR"
     assert plan.payoff_text == "됐다."
-    assert "bline_pop=1" in plan.reason
+    assert "semantic_clear=1" in plan.reason

@@ -95,22 +95,38 @@ def process_one() -> dict:
                 (x.get("appProperties") or {}).get("judm_creative_style")
                 for x in recent
             ]
+            recent_signatures = [
+                (x.get("appProperties") or {}).get("judm_creative_signature")
+                for x in recent
+            ]
             recent_styles = [x for x in recent_styles if x]
+            recent_signatures = [x for x in recent_signatures if x]
+
             avoid_styles: set[str] = set()
+            avoid_signatures: set[str] = set()
             if len(recent_styles) >= 2 and recent_styles[0] == recent_styles[1]:
                 avoid_styles.add(recent_styles[0])
+            if (
+                len(recent_signatures) >= 2
+                and recent_signatures[0] == recent_signatures[1]
+            ):
+                avoid_signatures.add(recent_signatures[0])
+
             outputs = auto_edit(
                 raw,
                 Path(td) / "edited",
                 base_meta,
                 avoid_styles=avoid_styles,
+                avoid_signatures=avoid_signatures,
             )
             creative = outputs["creative"]
             meta = make_metadata(f["name"], creative)
             result["creative"] = creative
             result["highlight"] = outputs["highlight"]
             result["recent_styles"] = recent_styles[:3]
+            result["recent_signatures"] = recent_signatures[:3]
             result["avoid_styles"] = sorted(avoid_styles)
+            result["avoid_signatures"] = sorted(avoid_signatures)
 
             if "youtube" in runnable:
                 vid = publish_youtube(

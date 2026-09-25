@@ -5,6 +5,7 @@ on:
     branches:
       - feature/creative-engine-v3
       - feature/universal-director-v4
+      - feature/creative-engine-v4
       - main
   workflow_dispatch:
 
@@ -60,11 +61,11 @@ jobs:
           JUDM_PREVIEW_INDEX=0 python -m judm_auto_shorts.preview | tee preview-result-0.json
           JUDM_PREVIEW_INDEX=1 python -m judm_auto_shorts.preview | tee preview-result-1.json
 
-      - name: Upload V3 previews
+      - name: Upload V4 previews
         if: ${{ github.ref != 'refs/heads/main' }}
         uses: actions/upload-artifact@v4
         with:
-          name: judm-v3-preview
+          name: judm-v4-preview
           path: |
             out/edited/*.mp4
             preview-result-*.json
