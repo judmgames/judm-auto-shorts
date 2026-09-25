@@ -129,3 +129,23 @@ def test_semantic_alignment_penalizes_menu_and_rewards_story_match():
 
     assert _semantic_alignment_score(candidate, menu) < 0.0
     assert _semantic_alignment_score(candidate, recovery) > candidate.score
+
+
+def test_semantic_parser_accepts_colon_and_quotes():
+    hint = parse_semantic_response(
+        '"SCENE": "gameplay"; "EVENT": "impact"; '
+        '"OUTCOME": "success"; "CONFIDENCE": "medium"'
+    )
+    assert hint.available is True
+    assert hint.scene == "gameplay"
+    assert hint.event == "impact"
+    assert hint.outcome == "success"
+    assert hint.confidence == 0.60
+
+
+def test_scene_only_semantic_is_not_enough_for_director_use():
+    hint = parse_semantic_response(
+        "SCENE=gameplay; EVENT=unknown; OUTCOME=unknown; CONFIDENCE=high"
+    )
+    assert hint.available is False
+    assert hint.scene == "gameplay"

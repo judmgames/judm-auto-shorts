@@ -57,9 +57,16 @@ def semantic_required() -> bool:
 
 
 def _pick(text: str, key: str, allowed: set[str]) -> str:
+    cleaned = (
+        (text or "")
+        .replace("**", "")
+        .replace(chr(96), "")
+        .replace('"', "")
+        .replace("'", "")
+    )
     match = re.search(
-        rf"\b{re.escape(key)}\s*=\s*([A-Za-z_]+)",
-        text or "",
+        rf"\b{re.escape(key)}\s*[:=]\s*([A-Za-z_]+)",
+        cleaned,
         flags=re.IGNORECASE,
     )
     value = match.group(1).lower() if match else "unknown"
@@ -72,7 +79,7 @@ def parse_semantic_response(text: str) -> SemanticHint:
     outcome = _pick(text, "OUTCOME", OUTCOMES)
     conf_name = _pick(text, "CONFIDENCE", set(CONFIDENCE))
     confidence = CONFIDENCE.get(conf_name, 0.0)
-    meaningful = any(x != "unknown" for x in (scene, event, outcome))
+    meaningful = event != "unknown" or outcome != "unknown"
     return SemanticHint(
         available=meaningful and confidence > 0,
         scene=scene,
@@ -160,7 +167,7 @@ def analyze_semantic(
             generated = model.generate(
                 **inputs,
                 do_sample=False,
-                max_new_tokens=48,
+                max_new_tokens=96,
             )
             prompt_len = inputs["input_ids"].shape[1]
             decoded = processor.batch_decode(
@@ -170,6 +177,10 @@ def analyze_semantic(
             infer_seconds = time.perf_counter() - infer_start
 
         parsed = parse_semantic_response(decoded)
+        reason = parsed.reason
+        if not parsed.available and parsed.raw:
+            compact = parsed.raw.replace("\n", " ").strip()[:160]
+            reason = f"{reason}:{compact}"
         return SemanticHint(
             available=parsed.available,
             scene=parsed.scene,
@@ -177,7 +188,7 @@ def analyze_semantic(
             outcome=parsed.outcome,
             confidence=parsed.confidence,
             raw=parsed.raw,
-            reason=parsed.reason,
+            reason=reason,
             load_seconds=round(load_seconds, 3),
             infer_seconds=round(infer_seconds, 3),
         )
