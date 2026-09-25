@@ -106,3 +106,35 @@ def test_recent_signature_can_select_near_equal_alternate():
     assert normal.candidate_count >= 2
     assert varied.signature != normal.signature
     assert varied.confidence >= normal.confidence * 0.70
+
+
+def test_preferred_signature_can_select_director_candidate():
+    from judm_auto_shorts.director import _build_candidates, _candidate_signature
+
+    s = _base()
+    first = 42
+    second = 84
+
+    s["motion"][first] = 1.0
+    s["scene"][first] = 0.78
+    s["flash"][first] = 0.95
+    s["audio"][first] = 0.98
+    s["focus_x"][first - 2:first + 3] = 0.20
+
+    s["motion"][second] = 0.95
+    s["scene"][second] = 0.70
+    s["flash"][second] = 0.88
+    s["audio"][second] = 0.92
+    s["focus_x"][second - 2:second + 3] = 0.82
+
+    candidates, _ = _build_candidates("GENERIC", s, duration=24.0)
+    assert len(candidates) >= 2
+    requested = _candidate_signature(candidates[1])
+
+    preferred = plan_from_signals(
+        "GENERIC",
+        s,
+        duration=24.0,
+        preferred_signature=requested,
+    )
+    assert preferred.signature == requested

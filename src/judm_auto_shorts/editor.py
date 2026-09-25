@@ -266,7 +266,10 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     return str(dst)
 
 
-def validate_render_quality(path: str | Path) -> None:
+def validate_render_quality(
+    path: str | Path,
+    plan: CreativePlan | None = None,
+) -> dict:
     path = Path(path)
     pr = probe(path)
     if pr.width != 1080 or pr.height != 1920:
@@ -277,18 +280,51 @@ def validate_render_quality(path: str | Path) -> None:
         raise CreativeReject("render output unexpectedly small")
 
     cap = cv2.VideoCapture(str(path))
-    samples = []
-    for sec in (0.2, pr.duration * 0.5, max(0.2, pr.duration - 0.3)):
+    times = [
+        0.12,
+        min(0.55, pr.duration * 0.18),
+        min(1.00, pr.duration * 0.24),
+        pr.duration * 0.50,
+        max(0.2, pr.duration - 0.30),
+    ]
+    frames = []
+    means = []
+    for sec in times:
         cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000.0)
         ok, frame = cap.read()
         if ok and frame is not None:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            samples.append(float(gray.mean()))
+            small = cv2.resize(gray, (180, 320), interpolation=cv2.INTER_AREA)
+            frames.append(small)
+            means.append(float(small.mean()))
     cap.release()
-    if len(samples) < 2:
+
+    if len(frames) < 4:
         raise CreativeReject("render could not be sampled for final QC")
-    if max(samples) < 12.0:
+    if max(means) < 12.0:
         raise CreativeReject("render appears black or visually broken")
+
+    diffs = [
+        float(cv2.absdiff(frames[i], frames[i - 1]).mean())
+        for i in range(1, len(frames))
+    ]
+    first_second_motion = max(diffs[:2]) if len(diffs) >= 2 else 0.0
+    overall_motion = max(diffs) if diffs else 0.0
+
+    if overall_motion < 0.65:
+        raise CreativeReject("render appears frozen or visually static")
+    if (
+        plan is not None
+        and plan.cold_open
+        and first_second_motion < 0.45
+    ):
+        raise CreativeReject("cold open failed final hook-motion QC")
+
+    return {
+        "first_second_motion": round(first_second_motion, 3),
+        "overall_motion": round(overall_motion, 3),
+        "sample_brightness_max": round(max(means), 2),
+    }
 
 
 def auto_edit(
@@ -313,13 +349,14 @@ def auto_edit(
     out.mkdir(parents=True, exist_ok=True)
     master = out / f"{Path(src).stem}_v4.mp4"
     render(src, master, plan, LABEL.get(game_key, LABEL["GENERIC"]))
-    validate_render_quality(master)
+    quality = validate_render_quality(master, plan)
     path = str(master)
     return {
         "youtube": path,
         "instagram": path,
         "tiktok": path,
         "creative": plan.to_dict(),
+        "quality": quality,
         "highlight": {
             "start": plan.start,
             "duration": plan.duration,

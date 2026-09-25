@@ -106,3 +106,26 @@ def test_semantic_failure_never_keeps_generic_clear_claim():
     updated = _apply_semantic_hint(plan, hint)
     assert updated.style == "IMPACT"
     assert updated.payoff_text == ""
+
+
+def test_semantic_alignment_penalizes_menu_and_rewards_story_match():
+    from judm_auto_shorts.director import EventCandidate, _semantic_alignment_score
+
+    candidate = EventCandidate(
+        index=10, time=2.0, score=0.62, style="TURNAROUND",
+        event=0.70, buildup=0.20, relief=0.05, sustained=0.45,
+        locality=0.70, focus_x=0.5, focus_y=0.5, focus_confidence=0.5,
+        story_clarity=0.60, contrast=0.30, sync=0.70, menu_risk=0.0,
+        pre_level=0.50, post_level=0.20,
+    )
+    menu = SemanticHint(
+        available=True, scene="menu", event="transition",
+        outcome="unknown", confidence=0.85,
+    )
+    recovery = SemanticHint(
+        available=True, scene="gameplay", event="danger",
+        outcome="recovery", confidence=0.85,
+    )
+
+    assert _semantic_alignment_score(candidate, menu) < 0.0
+    assert _semantic_alignment_score(candidate, recovery) > candidate.score

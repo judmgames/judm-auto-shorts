@@ -176,6 +176,8 @@ def analyze_semantic(
             infer_seconds=round(infer_seconds, 3),
         )
     except Exception as exc:
+        detail = str(exc).replace("\n", " ").strip()[:180]
+        suffix = f":{detail}" if detail else ""
         return SemanticHint(
-            reason=f"fallback:{type(exc).__name__}",
+            reason=f"fallback:{type(exc).__name__}{suffix}",
         )

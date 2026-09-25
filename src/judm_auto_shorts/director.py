@@ -630,6 +630,7 @@ def plan_from_signals(
     duration: float,
     avoid_styles: set[str] | None = None,
     avoid_signatures: set[str] | None = None,
+    preferred_signature: str | None = None,
 ) -> CreativePlan:
     signals = dict(signals)
     t = signals["time"]
@@ -649,6 +650,14 @@ def plan_from_signals(
     avoid_styles = set(avoid_styles or ())
     avoid_signatures = set(avoid_signatures or ())
     best = candidates[0]
+    if preferred_signature:
+        for candidate in candidates:
+            if (
+                _candidate_signature(candidate) == preferred_signature
+                and candidate.score >= candidates[0].score * 0.68
+            ):
+                best = candidate
+                break
     if (
         best.style in avoid_styles
         or _candidate_signature(best) in avoid_signatures
@@ -949,6 +958,48 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
     )
 
 
+def _semantic_alignment_score(candidate: EventCandidate, hint) -> float:
+    score = float(candidate.score)
+    if not bool(getattr(hint, "available", False)):
+        return score
+
+    confidence = float(getattr(hint, "confidence", 0.0) or 0.0)
+    scene = getattr(hint, "scene", "unknown")
+    event = getattr(hint, "event", "unknown")
+    outcome = getattr(hint, "outcome", "unknown")
+
+    if scene in {"menu", "loading"}:
+        return score - 1.20 * confidence
+    if scene == "gameplay":
+        score += 0.06 * confidence
+    elif scene == "result":
+        score -= 0.08 * confidence
+
+    event_match = {
+        "clear": {"CLEAR", "TURNAROUND"},
+        "impact": {"IMPACT", "TURNAROUND"},
+        "danger": {"TURNAROUND", "BUILDUP", "IMPACT"},
+        "chain": {"RHYTHM", "BUILDUP", "FEVER", "CLEAR"},
+        "movement": {"RHYTHM", "BUILDUP", "IMPACT"},
+    }
+    if event in event_match:
+        score += (0.16 if candidate.style in event_match[event] else 0.07) * confidence
+    elif event == "transition":
+        score -= 0.16 * confidence
+
+    if outcome == "success":
+        score += 0.10 * confidence
+    elif outcome == "recovery":
+        score += 0.14 * confidence
+    elif outcome == "failure":
+        if candidate.style == "CLEAR":
+            score -= 0.28 * confidence
+        elif candidate.style in {"IMPACT", "TURNAROUND"}:
+            score += 0.05 * confidence
+
+    return score
+
+
 def analyze_creative(
     path: str | Path,
     game_key: str,
@@ -957,22 +1008,57 @@ def analyze_creative(
     avoid_signatures: set[str] | None = None,
 ) -> CreativePlan:
     signals = sample_signals(path, game_key)
+    preferred_signature = None
+    preferred_hint = None
+
+    try:
+        from .semantic import analyze_semantic, semantic_enabled
+
+        if semantic_enabled():
+            candidates, _ = _build_candidates(game_key, signals, duration)
+            ranked = []
+            for candidate in candidates[:3]:
+                signature = _candidate_signature(candidate)
+                if (
+                    signature in set(avoid_signatures or ())
+                    and candidate.score < candidates[0].score * 0.92
+                ):
+                    continue
+                hint = analyze_semantic(path, candidate.time)
+                ranked.append(
+                    (_semantic_alignment_score(candidate, hint), candidate, hint)
+                )
+            if ranked:
+                ranked.sort(key=lambda item: item[0], reverse=True)
+                _, winner, preferred_hint = ranked[0]
+                preferred_signature = _candidate_signature(winner)
+    except Exception:
+        preferred_signature = None
+        preferred_hint = None
+
     plan = plan_from_signals(
         game_key,
         signals,
         duration,
         avoid_styles=avoid_styles,
         avoid_signatures=avoid_signatures,
+        preferred_signature=preferred_signature,
     )
 
     try:
-        from .semantic import analyze_semantic
+        from .semantic import analyze_semantic, semantic_enabled
 
-        hint = analyze_semantic(
-            path,
-            plan.start + plan.payoff_at,
-        )
-        return _apply_semantic_hint(plan, hint)
+        if not semantic_enabled():
+            return plan
+        if preferred_hint is None or (
+            preferred_signature is not None
+            and plan.signature != preferred_signature
+        ):
+            preferred_hint = analyze_semantic(
+                path,
+                plan.start + plan.payoff_at,
+            )
+        return _apply_semantic_hint(plan, preferred_hint)
     except CreativeReject:
         raise
     except Exception as exc:

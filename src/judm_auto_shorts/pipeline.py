@@ -123,6 +123,7 @@ def process_one() -> dict:
             meta = make_metadata(f["name"], creative)
             result["creative"] = creative
             result["highlight"] = outputs["highlight"]
+            result["quality"] = outputs.get("quality", {})
             result["recent_styles"] = recent_styles[:3]
             result["recent_signatures"] = recent_signatures[:3]
             result["avoid_styles"] = sorted(avoid_styles)
