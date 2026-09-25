@@ -29,9 +29,9 @@ class DriveProvider:
             return r[0]["id"]
         return {"root":root,"ready":find("01_READY"),"posted":find("02_POSTED")}
 
-    def _list(self,folder_id:str,limit=20):
+    def _list(self,folder_id:str,limit=20,order_by="createdTime"):
         q=f"'{folder_id}' in parents and trashed=false and mimeType contains 'video/'"
-        return self.api.files().list(q=q,fields="files(id,name,mimeType,size,createdTime,parents,appProperties)",orderBy="createdTime",pageSize=limit,supportsAllDrives=True,includeItemsFromAllDrives=True).execute().get("files",[])
+        return self.api.files().list(q=q,fields="files(id,name,mimeType,size,createdTime,parents,appProperties)",orderBy=order_by,pageSize=limit,supportsAllDrives=True,includeItemsFromAllDrives=True).execute().get("files",[])
 
     def list_new(self,inbox_id:str,limit=20):
         return [
@@ -53,9 +53,7 @@ class DriveProvider:
         out.sort(key=lambda x:x.get("createdTime", "")); return out[:limit]
 
     def list_posted(self,posted_id:str,limit=8):
-        out=self._list(posted_id,limit)
-        out.sort(key=lambda x:x.get("createdTime", ""),reverse=True)
-        return out[:limit]
+        return self._list(posted_id,limit,order_by="createdTime desc")
 
     def download(self,file_id:str,target:str|Path):
         target=Path(target); target.parent.mkdir(parents=True,exist_ok=True)
