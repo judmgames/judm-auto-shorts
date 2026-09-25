@@ -30,6 +30,13 @@ env:
 
   GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 
+  JUDM_SEMANTIC_ENABLED: 'true'
+  JUDM_SEMANTIC_REQUIRED: 'true'
+  JUDM_SEMANTIC_MODEL: HuggingFaceTB/SmolVLM2-256M-Video-Instruct
+  HF_HOME: ~/.cache/huggingface
+  HF_HUB_DISABLE_TELEMETRY: '1'
+  TOKENIZERS_PARALLELISM: 'false'
+
   YOUTUBE_ENABLED: ${{ vars.YOUTUBE_ENABLED }}
   GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
   GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
@@ -54,7 +61,7 @@ env:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +69,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Cache semantic model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: smolvlm2-256m-v1
 
       - name: 영상 편집 프로그램 설치
         run: |
@@ -73,6 +86,8 @@ jobs:
           -o "$HOME/.local/share/fonts/DoHyeon-Regular.ttf"
           fc-cache -f
           pip install -r requirements.txt
+          pip install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-semantic.txt
 
       - name: 연결 검사
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'doctor' }}

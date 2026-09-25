@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -81,3 +82,28 @@ def test_dead_unknown_game_is_rejected():
     }
     with pytest.raises(CreativeReject):
         plan_from_signals("GENERIC", s, duration=15.0)
+
+
+def test_unknown_game_auto_roi_follows_persistent_action(tmp_path):
+    from judm_auto_shorts.director import _detect_generic_roi
+
+    video = tmp_path / "roi_test.avi"
+    writer = cv2.VideoWriter(
+        str(video),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        15.0,
+        (640, 360),
+    )
+    assert writer.isOpened()
+    for i in range(90):
+        frame = np.zeros((360, 640, 3), np.uint8)
+        x = 390 + (i * 5) % 150
+        cv2.rectangle(frame, (x, 90), (min(x + 55, 625), 285), (255, 255, 255), -1)
+        writer.write(frame)
+    writer.release()
+
+    x0, y0, x1, y1 = _detect_generic_roi(video)
+    assert x1 > 0.70
+    assert (x0 + x1) / 2 > 0.52
+    assert x1 - x0 >= 0.47
+    assert y1 - y0 >= 0.47

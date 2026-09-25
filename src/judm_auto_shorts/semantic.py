@@ -22,19 +22,45 @@ EVENTS = {
 }
 OUTCOMES = {"success", "failure", "recovery", "unknown"}
 CONFIDENCE = {"low": 0.35, "medium": 0.60, "high": 0.85}
-PROMPT = """Review these three frames in chronological order.
-Choose exactly ONE word for each field. Do not explain. Do not copy the option
-lists and never output the | character.
 
-SCENE allowed words: gameplay, menu, result, loading, unknown
-EVENT allowed words: clear, impact, danger, chain, movement, transition, unknown
-OUTCOME allowed words: success, failure, recovery, unknown
-CONFIDENCE allowed words: low, medium, high
+# Small VLMs are much more reliable when choosing one grounded class than
+# when filling several independent fields.  Keep the label vocabulary small,
+# observable, and game-agnostic.  The rest of the director stays deterministic.
+SEMANTIC_LABELS = {
+    "gameplay_clear_success": ("gameplay", "clear", "success"),
+    "gameplay_danger_recovery": ("gameplay", "danger", "recovery"),
+    "gameplay_danger_failure": ("gameplay", "danger", "failure"),
+    "gameplay_chain_success": ("gameplay", "chain", "success"),
+    "gameplay_chain_unknown": ("gameplay", "chain", "unknown"),
+    "gameplay_impact_success": ("gameplay", "impact", "success"),
+    "gameplay_impact_failure": ("gameplay", "impact", "failure"),
+    "gameplay_movement_unknown": ("gameplay", "movement", "unknown"),
+    "menu_transition_unknown": ("menu", "transition", "unknown"),
+    "result_transition_success": ("result", "transition", "success"),
+    "result_transition_failure": ("result", "transition", "failure"),
+    "loading_transition_unknown": ("loading", "transition", "unknown"),
+    "unknown_unknown_unknown": ("unknown", "unknown", "unknown"),
+}
 
-Return exactly one line in this format:
-SCENE=<word>; EVENT=<word>; OUTCOME=<word>; CONFIDENCE=<word>
+PROMPT = """These game frames are in chronological order from before to after the key moment.
+Pick the ONE label that best describes the visible story across the sequence.
+Return ONLY the exact label. No explanation.
 
-Use only what the frames visibly support. If unsure, use unknown.
+gameplay_clear_success
+gameplay_danger_recovery
+gameplay_danger_failure
+gameplay_chain_success
+gameplay_chain_unknown
+gameplay_impact_success
+gameplay_impact_failure
+gameplay_movement_unknown
+menu_transition_unknown
+result_transition_success
+result_transition_failure
+loading_transition_unknown
+unknown_unknown_unknown
+
+Use only visible evidence. If the result is not clear, choose unknown_unknown_unknown.
 """
 
 
@@ -79,10 +105,27 @@ def _pick(text: str, key: str, allowed: set[str]) -> str:
 
 
 def parse_semantic_response(text: str) -> SemanticHint:
-    scene = _pick(text, "SCENE", SCENES)
-    event = _pick(text, "EVENT", EVENTS)
-    outcome = _pick(text, "OUTCOME", OUTCOMES)
-    conf_name = _pick(text, "CONFIDENCE", set(CONFIDENCE))
+    raw = (text or "").strip()
+    lowered = raw.lower().replace("-", "_").replace(" ", "_")
+    for label, (scene, event, outcome) in SEMANTIC_LABELS.items():
+        if label in lowered:
+            meaningful = event != "unknown" or outcome != "unknown"
+            exact = lowered.strip(" .,:;\n\t") == label
+            return SemanticHint(
+                available=meaningful,
+                scene=scene,
+                event=event,
+                outcome=outcome,
+                confidence=0.82 if exact else 0.68,
+                raw=raw[:300],
+                reason="label_exact" if exact else "label_embedded",
+            )
+
+    # Backward-compatible parser for older benchmark responses and tests.
+    scene = _pick(raw, "SCENE", SCENES)
+    event = _pick(raw, "EVENT", EVENTS)
+    outcome = _pick(raw, "OUTCOME", OUTCOMES)
+    conf_name = _pick(raw, "CONFIDENCE", set(CONFIDENCE))
     confidence = CONFIDENCE.get(conf_name, 0.0)
     meaningful = event != "unknown" or outcome != "unknown"
     return SemanticHint(
@@ -91,8 +134,8 @@ def parse_semantic_response(text: str) -> SemanticHint:
         event=event,
         outcome=outcome,
         confidence=confidence,
-        raw=(text or "").strip()[:300],
-        reason="parsed" if meaningful else "unparseable",
+        raw=raw[:300],
+        reason="parsed_legacy" if meaningful else "unparseable",
     )
 def _frame_paths(
     video_path: str | Path,
@@ -104,7 +147,7 @@ def _frame_paths(
         cap.get(cv2.CAP_PROP_FPS) or 30.0, 1.0
     ) * 1000.0
     paths: list[str] = []
-    for idx, offset in enumerate((-0.75, 0.0, 0.80)):
+    for idx, offset in enumerate((-2.10, -1.40, -0.70, 0.0, 0.65, 1.30, 2.00)):
         sec = max(0.0, center + offset)
         if duration_ms:
             sec = min(sec, max(0.0, duration_ms / 1000.0 - 0.05))
@@ -151,15 +194,17 @@ def analyze_semantic(
     try:
         processor, model, load_seconds = _load_model()
         with tempfile.TemporaryDirectory(prefix="judm_semantic_") as td:
-            frame_paths = _frame_paths(video_path, center, Path(td))
-            if len(frame_paths) < 2:
-                return SemanticHint(reason="insufficient_frames")
-            content = [
-                {"type": "image", "path": p}
-                for p in frame_paths
-            ]
-            content.append({"type": "text", "text": PROMPT})
-            conversation = [{"role": "user", "content": content}]
+            work = Path(td)
+            frame_paths = _frame_paths(video_path, center, work)
+            if len(frame_paths) < 4:
+                return SemanticHint(reason="insufficient_media")
+            conversation = [{
+                "role": "user",
+                "content": [
+                    *[{"type": "image", "path": p} for p in frame_paths],
+                    {"type": "text", "text": PROMPT},
+                ],
+            }]
 
             infer_start = time.perf_counter()
             inputs = processor.apply_chat_template(
@@ -169,16 +214,17 @@ def analyze_semantic(
                 return_dict=True,
                 return_tensors="pt",
             ).to(model.device)
+
             generated = model.generate(
                 **inputs,
                 do_sample=False,
-                max_new_tokens=96,
+                max_new_tokens=32,
             )
             prompt_len = inputs["input_ids"].shape[1]
-            decoded = processor.batch_decode(
-                generated[:, prompt_len:],
+            decoded = processor.decode(
+                generated[0, prompt_len:],
                 skip_special_tokens=True,
-            )[0]
+            )
             infer_seconds = time.perf_counter() - infer_start
 
         parsed = parse_semantic_response(decoded)

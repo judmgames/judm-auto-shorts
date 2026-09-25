@@ -129,12 +129,109 @@ def _audio_scores(path: str | Path, hz: float) -> tuple[np.ndarray, np.ndarray]:
     return np.arange(len(rms), dtype=np.float32) / hz, rms
 
 
-def _crop_roi(frame: np.ndarray, game_key: str) -> np.ndarray:
+def _crop_roi(
+    frame: np.ndarray,
+    game_key: str,
+    roi: tuple[float, float, float, float] | None = None,
+) -> np.ndarray:
     h, w = frame.shape[:2]
-    x0, y0, x1, y1 = get_profile(game_key).roi
+    x0, y0, x1, y1 = roi or get_profile(game_key).roi
     a, b, c, d = int(w * x0), int(h * y0), int(w * x1), int(h * y1)
     crop = frame[max(0, b):max(b + 1, d), max(0, a):max(a + 1, c)]
     return crop if crop.size else frame
+
+
+def _weighted_quantile(weights: np.ndarray, q: float) -> float:
+    weights = np.maximum(weights.astype(np.float64), 0.0)
+    total = float(weights.sum())
+    if total <= 1e-9:
+        return q
+    cdf = np.cumsum(weights) / total
+    return float(np.searchsorted(cdf, q) / max(len(weights) - 1, 1))
+
+
+def _detect_generic_roi(path: str | Path) -> tuple[float, float, float, float]:
+    """Estimate the active gameplay region without knowing the game.
+
+    The detector samples the recording sparsely and accumulates persistent
+    temporal change.  One-off full-screen transitions are suppressed by a
+    median aggregation, so HUD/menu flashes are less likely to become the ROI.
+    """
+    fallback = get_profile("GENERIC").roi
+    cap = cv2.VideoCapture(str(path))
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if frame_count < 12:
+        cap.release()
+        return fallback
+
+    positions = np.linspace(0.08, 0.84, 14)
+    diffs: list[np.ndarray] = []
+    prev = None
+    for ratio in positions:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_count * float(ratio)))
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        gray = cv2.cvtColor(
+            cv2.resize(frame, (320, 180), interpolation=cv2.INTER_AREA),
+            cv2.COLOR_BGR2GRAY,
+        )
+        if prev is not None:
+            diff = cv2.GaussianBlur(cv2.absdiff(gray, prev), (0, 0), 2.0)
+            diffs.append(diff.astype(np.float32))
+        prev = gray
+    cap.release()
+
+    if len(diffs) < 4:
+        return fallback
+    stack = np.stack(diffs, axis=0)
+    heat = np.percentile(stack, 65, axis=0)
+    heat = np.maximum(heat - np.percentile(heat, 52), 0.0)
+    if float(heat.mean()) < 1.2 or float(heat.max()) < 8.0:
+        return fallback
+
+    xw = heat.sum(axis=0)
+    yw = heat.sum(axis=1)
+    x0 = _weighted_quantile(xw, 0.06)
+    x1 = _weighted_quantile(xw, 0.94)
+    y0 = _weighted_quantile(yw, 0.06)
+    y1 = _weighted_quantile(yw, 0.94)
+
+    pad_x = 0.07
+    pad_y = 0.07
+    x0, x1 = max(0.02, x0 - pad_x), min(0.98, x1 + pad_x)
+    y0, y1 = max(0.02, y0 - pad_y), min(0.98, y1 + pad_y)
+
+    # Do not over-crop unfamiliar games.  A human editor keeps context when
+    # the detector is uncertain.
+    if x1 - x0 < 0.48:
+        mid = (x0 + x1) * 0.5
+        x0, x1 = max(0.02, mid - 0.24), min(0.98, mid + 0.24)
+        if x1 - x0 < 0.48:
+            if x1 >= 0.97:
+                x0 = max(0.02, x1 - 0.48)
+            else:
+                x1 = min(0.98, x0 + 0.48)
+    if y1 - y0 < 0.48:
+        mid = (y0 + y1) * 0.5
+        y0, y1 = max(0.02, mid - 0.24), min(0.98, mid + 0.24)
+        if y1 - y0 < 0.48:
+            if y1 >= 0.97:
+                y0 = max(0.02, y1 - 0.48)
+            else:
+                y1 = min(0.98, y0 + 0.48)
+
+    return (float(x0), float(y0), float(x1), float(y1))
+
+
+def _analysis_roi(
+    path: str | Path,
+    game_key: str,
+) -> tuple[float, float, float, float]:
+    profile = get_profile(game_key)
+    if game_key != "GENERIC":
+        return profile.roi
+    return _detect_generic_roi(path)
 
 
 def _focus_from_diff(diff: np.ndarray) -> tuple[float, float, float, float]:
@@ -154,6 +251,7 @@ def sample_signals(
     game_key: str,
     hz: float = 6.0,
 ) -> dict[str, np.ndarray]:
+    roi_spec = _analysis_roi(path, game_key)
     cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     step = max(int(round(fps / hz)), 1)
@@ -169,7 +267,7 @@ def sample_signals(
         if i % step:
             i += 1
             continue
-        roi = _crop_roi(frame, game_key)
+        roi = _crop_roi(frame, game_key, roi_spec)
         small = cv2.resize(roi, (256, 256), interpolation=cv2.INTER_AREA)
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -225,6 +323,7 @@ def sample_signals(
         "focus_y": fy,
         "focus_confidence": fc,
         "locality": loc,
+        "roi": np.asarray(roi_spec, np.float32),
     }
 
 
@@ -780,7 +879,11 @@ def plan_from_signals(
     clear_drop = max(0.0, db - da)
 
     profile = get_profile(game_key)
-    x0, y0, x1, y1 = profile.roi
+    roi_arr = signals.get("roi")
+    if roi_arr is not None and len(roi_arr) == 4:
+        x0, y0, x1, y1 = [float(v) for v in roi_arr]
+    else:
+        x0, y0, x1, y1 = profile.roi
     full_focus_x = x0 + best.focus_x * (x1 - x0)
     full_focus_y = y0 + best.focus_y * (y1 - y0)
 
@@ -909,6 +1012,30 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
             new_replay_duration = 0.0
             new_hook = "PAYOFF_FIRST"
             clarity = min(1.0, clarity + 0.07)
+        elif event == "danger" and outcome == "failure":
+            new_style = "NEAR_FAIL"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.14)
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = confidence >= 0.80
+            new_replay_duration = 0.52 if new_replay else 0.0
+            new_hook = "MICRO_REPLAY" if new_replay else "ACTION_FIRST"
+            lead_text = ""
+            payoff_text = ""
+            clarity = min(1.0, clarity + 0.06)
+        elif event == "impact" and outcome == "failure":
+            new_style = "FAIL"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.15)
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = confidence >= 0.80
+            new_replay_duration = 0.50 if new_replay else 0.0
+            new_hook = "MICRO_REPLAY" if new_replay else "ACTION_FIRST"
+            lead_text = ""
+            payoff_text = ""
+            clarity = min(1.0, clarity + 0.05)
         elif event == "chain":
             if new_style not in {"CLEAR", "TURNAROUND"}:
                 new_style = "RHYTHM"

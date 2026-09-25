@@ -104,7 +104,10 @@ def test_semantic_failure_never_keeps_generic_clear_claim():
         reason="parsed",
     )
     updated = _apply_semantic_hint(plan, hint)
-    assert updated.style == "IMPACT"
+    assert updated.style == "FAIL"
+    assert updated.treatment == "PUNCH"
+    assert updated.hook_strategy == "MICRO_REPLAY"
+    assert updated.replay is True
     assert updated.payoff_text == ""
 
 
@@ -149,3 +152,13 @@ def test_scene_only_semantic_is_not_enough_for_director_use():
     )
     assert hint.available is False
     assert hint.scene == "gameplay"
+
+
+def test_semantic_single_label_is_preferred_for_small_model():
+    hint = parse_semantic_response("gameplay_danger_recovery")
+    assert hint.available is True
+    assert hint.scene == "gameplay"
+    assert hint.event == "danger"
+    assert hint.outcome == "recovery"
+    assert hint.confidence >= 0.80
+    assert hint.reason == "label_exact"
