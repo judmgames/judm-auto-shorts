@@ -991,7 +991,10 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
     lead_text = plan.lead_text
     payoff_text = plan.payoff_text
     clarity = plan.story_clarity
-    if plan.game_key == "GENERIC":
+    # Semantic story evidence is the director-level source of truth for every
+    # game. Profiles may improve detection/framing, but must never override a
+    # clearly observed story just because the game is registered.
+    if scene == "gameplay":
         if event == "clear" and outcome in {"success", "recovery"}:
             new_style = "CLEAR"
             new_treatment = "REVEAL"

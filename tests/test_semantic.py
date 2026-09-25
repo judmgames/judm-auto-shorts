@@ -162,3 +162,27 @@ def test_semantic_single_label_is_preferred_for_small_model():
     assert hint.outcome == "recovery"
     assert hint.confidence >= 0.80
     assert hint.reason == "label_exact"
+
+
+def test_semantic_story_overrides_registered_game_profile():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.55
+    s["audio"][i] = 0.92
+    s["flash"][i] = 0.70
+    plan = plan_from_signals("BLINE", s, duration=20.0)
+
+    hint = SemanticHint(
+        available=True,
+        scene="gameplay",
+        event="danger",
+        outcome="recovery",
+        confidence=0.82,
+        reason="label_exact",
+    )
+    updated = _apply_semantic_hint(plan, hint)
+    assert updated.style == "TURNAROUND"
+    assert updated.treatment == "REVEAL"
+    assert updated.hook_strategy == "PAYOFF_FIRST"
+    assert updated.semantic_used is True
