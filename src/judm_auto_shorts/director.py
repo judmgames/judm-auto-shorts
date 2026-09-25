@@ -1040,21 +1040,32 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
             payoff_text = ""
             clarity = min(1.0, clarity + 0.05)
         elif event == "chain":
-            if new_style not in {"CLEAR", "TURNAROUND"}:
-                new_style = "RHYTHM"
-                new_treatment = "RHYTHM"
-                new_hook = "FLOW"
-                new_cold = False
-                new_cold_len = 0.0
-                new_replay = False
-                new_replay_duration = 0.0
-                clarity = min(1.0, clarity + 0.05)
-        elif event == "impact" and new_style in {"ASMR", "BUILDUP"}:
+            new_style = "RHYTHM"
+            new_treatment = "RHYTHM"
+            new_hook = "FLOW"
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = False
+            new_replay_duration = 0.0
+            clarity = min(1.0, clarity + (0.06 if outcome == "success" else 0.04))
+        elif event == "impact" and outcome == "success":
+            new_style = "IMPACT"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.14)
+            new_hook = "ACTION_FIRST"
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = confidence >= 0.80 and plan.confidence >= 0.58
+            new_replay_duration = 0.48 if new_replay else 0.0
+            if new_replay:
+                new_hook = "MICRO_REPLAY"
+            clarity = min(1.0, clarity + 0.05)
+        elif event == "impact":
             new_style = "IMPACT"
             new_treatment = "PUNCH"
             new_zoom = max(new_zoom, 0.12)
             new_hook = "ACTION_FIRST"
-            clarity = min(1.0, clarity + 0.04)
+            clarity = min(1.0, clarity + 0.03)
 
         if outcome == "failure" and new_style == "CLEAR":
             new_style = "IMPACT"
@@ -1066,6 +1077,13 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
             new_cold_len = 0.0
             new_replay = False
             new_replay_duration = 0.0
+
+    if new_style != plan.style:
+        # A treatment change invalidates copy authored for the previous story.
+        # Keep the edit grounded rather than carrying a game-specific caption
+        # into a semantically different scene.
+        lead_text = ""
+        payoff_text = ""
 
     signature = plan.signature
     if new_style != plan.style and ":" in signature:

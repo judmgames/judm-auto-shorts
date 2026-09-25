@@ -36,13 +36,17 @@ def detect_game(name: str) -> str:
     return "GENERIC"
 
 
-def _scene_copy(style: str, clear_drop: float) -> tuple[str, str]:
+def _scene_copy(game: str, style: str, clear_drop: float) -> tuple[str, str]:
     if style == "RESCUE":
-        return "여기서 살았다", "막히던 판이 한 수로 열렸다."
+        return "여기서 살았다", "위기에서 빠져나온 순간."
     if style == "CLEAR":
+        if game == "BLINE":
+            if clear_drop >= 0.24:
+                return "한 번에 정리됐다", "한 번에 크게 정리된 장면."
+            return "여기서 지웠다", "POP이 나온 순간."
         if clear_drop >= 0.24:
-            return "한 번에 정리됐다", "한 번에 크게 정리된 장면."
-        return "여기서 지웠다", "POP이 나온 순간."
+            return "한 번에 바뀌었다", "큰 변화가 한 번에 나온 순간."
+        return "여기서 풀렸다", "결과가 바뀐 순간."
     if style == "FEVER":
         return "왔다", "플레이 흐름이 바뀐 순간."
     if style == "TURNAROUND":
@@ -70,7 +74,7 @@ def make_metadata(filename: str, creative: dict | None = None) -> Metadata:
     creative = creative or {}
     style = str(creative.get("style") or "GENERIC")
     clear_drop = float(creative.get("clear_drop") or 0.0)
-    title_copy, detail = _scene_copy(style, clear_drop)
+    title_copy, detail = _scene_copy(game, style, clear_drop)
 
     hook = str(creative.get("lead_text") or "")
     title = f"{title_copy} | {label}"[:100]

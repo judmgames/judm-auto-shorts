@@ -186,3 +186,31 @@ def test_semantic_story_overrides_registered_game_profile():
     assert updated.treatment == "REVEAL"
     assert updated.hook_strategy == "PAYOFF_FIRST"
     assert updated.semantic_used is True
+
+
+def test_semantic_chain_overrides_registered_clear_profile():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.55
+    s["audio"][i] = 0.92
+    s["flash"][i] = 0.70
+    s["density"][:i] = 0.80
+    s["density"][i + 1:] = 0.44
+    plan = plan_from_signals("BLINE", s, duration=20.0)
+    assert plan.style == "CLEAR"
+
+    hint = SemanticHint(
+        available=True,
+        scene="gameplay",
+        event="chain",
+        outcome="success",
+        confidence=0.82,
+        reason="label_exact",
+    )
+    updated = _apply_semantic_hint(plan, hint)
+    assert updated.style == "RHYTHM"
+    assert updated.treatment == "RHYTHM"
+    assert updated.hook_strategy == "FLOW"
+    assert updated.lead_text == ""
+    assert updated.payoff_text == ""

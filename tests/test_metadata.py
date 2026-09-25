@@ -32,3 +32,20 @@ def test_metadata_uses_creative_result_not_filename_random_hook():
 def test_metadata_deterministic():
     creative = {"style": "MISTAKE", "lead_text": "아."}
     assert make_metadata("BLINE_run.mp4", creative) == make_metadata("BLINE_run.mp4", creative)
+
+
+def test_unknown_game_metadata_never_invents_bline_terms():
+    creative = {
+        "style": "CLEAR",
+        "clear_drop": 0.10,
+        "lead_text": "",
+    }
+    meta = make_metadata("new_unknown_game_capture.mp4", creative)
+    text = " ".join([
+        meta.youtube_title,
+        meta.youtube_description,
+        meta.instagram_caption,
+        meta.tiktok_caption,
+    ])
+    assert "POP" not in text
+    assert "B.Line" not in text
