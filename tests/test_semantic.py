@@ -244,3 +244,63 @@ def test_final_director_gate_rejects_unclear_story():
     plan = plan.__class__(**{**plan.to_dict(), "story_clarity": 0.20})
     with pytest.raises(CreativeReject, match="story too unclear"):
         _final_director_gate(plan)
+
+
+def test_semantic_parser_understands_movement_outcomes():
+    ok = parse_semantic_response("gameplay_movement_success")
+    assert ok.available is True
+    assert ok.scene == "gameplay"
+    assert ok.event == "movement"
+    assert ok.outcome == "success"
+
+    fail = parse_semantic_response("gameplay_movement_failure")
+    assert fail.available is True
+    assert fail.event == "movement"
+    assert fail.outcome == "failure"
+
+
+def test_movement_success_becomes_timing_treatment():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.50
+    s["audio"][i] = 0.90
+    s["flash"][i] = 0.55
+    plan = plan_from_signals("GENERIC", s, duration=20.0)
+    hint = SemanticHint(
+        available=True,
+        scene="gameplay",
+        event="movement",
+        outcome="success",
+        confidence=0.85,
+        reason="label_exact",
+    )
+    updated = _apply_semantic_hint(plan, hint)
+    assert updated.style == "TIMING"
+    assert updated.treatment == "PUNCH"
+    assert updated.hook_strategy in {"ACTION_FIRST", "MICRO_REPLAY"}
+    assert updated.lead_text == ""
+    assert updated.payoff_text == ""
+
+
+def test_movement_failure_becomes_near_fail():
+    s = _signals()
+    i = 54
+    s["motion"][i] = 1.0
+    s["scene"][i] = 0.50
+    s["audio"][i] = 0.90
+    s["flash"][i] = 0.55
+    plan = plan_from_signals("GENERIC", s, duration=20.0)
+    hint = SemanticHint(
+        available=True,
+        scene="gameplay",
+        event="movement",
+        outcome="failure",
+        confidence=0.85,
+        reason="label_exact",
+    )
+    updated = _apply_semantic_hint(plan, hint)
+    assert updated.style == "NEAR_FAIL"
+    assert updated.treatment == "PUNCH"
+    assert updated.lead_text == ""
+    assert updated.payoff_text == ""

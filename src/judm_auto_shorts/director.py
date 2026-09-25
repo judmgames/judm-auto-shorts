@@ -1039,6 +1039,34 @@ def _apply_semantic_hint(plan: CreativePlan, hint) -> CreativePlan:
             lead_text = ""
             payoff_text = ""
             clarity = min(1.0, clarity + 0.05)
+        elif event == "movement" and outcome == "success":
+            new_style = "TIMING"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.12)
+            new_hook = "ACTION_FIRST"
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = confidence >= 0.84 and plan.confidence >= 0.58
+            new_replay_duration = 0.42 if new_replay else 0.0
+            if new_replay:
+                new_hook = "MICRO_REPLAY"
+            lead_text = ""
+            payoff_text = ""
+            clarity = min(1.0, clarity + 0.05)
+        elif event == "movement" and outcome == "failure":
+            new_style = "NEAR_FAIL"
+            new_treatment = "PUNCH"
+            new_zoom = max(new_zoom, 0.13)
+            new_hook = "ACTION_FIRST"
+            new_cold = False
+            new_cold_len = 0.0
+            new_replay = confidence >= 0.82
+            new_replay_duration = 0.46 if new_replay else 0.0
+            if new_replay:
+                new_hook = "MICRO_REPLAY"
+            lead_text = ""
+            payoff_text = ""
+            clarity = min(1.0, clarity + 0.05)
         elif event == "chain":
             new_style = "RHYTHM"
             new_treatment = "RHYTHM"
@@ -1188,7 +1216,7 @@ def _semantic_alignment_score(candidate: EventCandidate, hint) -> float:
         "impact": {"IMPACT", "TURNAROUND"},
         "danger": {"TURNAROUND", "BUILDUP", "IMPACT"},
         "chain": {"RHYTHM", "BUILDUP", "FEVER", "CLEAR"},
-        "movement": {"RHYTHM", "BUILDUP", "IMPACT"},
+        "movement": {"TIMING", "NEAR_FAIL", "RHYTHM", "BUILDUP", "IMPACT"},
     }
     if event in event_match:
         score += (0.16 if candidate.style in event_match[event] else 0.07) * confidence

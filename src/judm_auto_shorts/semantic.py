@@ -34,6 +34,8 @@ SEMANTIC_LABELS = {
     "gameplay_chain_unknown": ("gameplay", "chain", "unknown"),
     "gameplay_impact_success": ("gameplay", "impact", "success"),
     "gameplay_impact_failure": ("gameplay", "impact", "failure"),
+    "gameplay_movement_success": ("gameplay", "movement", "success"),
+    "gameplay_movement_failure": ("gameplay", "movement", "failure"),
     "gameplay_movement_unknown": ("gameplay", "movement", "unknown"),
     "menu_transition_unknown": ("menu", "transition", "unknown"),
     "result_transition_success": ("result", "transition", "success"),
@@ -53,6 +55,8 @@ gameplay_chain_success
 gameplay_chain_unknown
 gameplay_impact_success
 gameplay_impact_failure
+gameplay_movement_success
+gameplay_movement_failure
 gameplay_movement_unknown
 menu_transition_unknown
 result_transition_success

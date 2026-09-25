@@ -49,3 +49,19 @@ def test_unknown_game_metadata_never_invents_bline_terms():
     ])
     assert "POP" not in text
     assert "B.Line" not in text
+
+
+def test_unknown_game_timing_metadata_is_game_agnostic():
+    meta = make_metadata(
+        "mystery_gameplay_capture.mp4",
+        {"style": "TIMING", "clear_drop": 0.0, "lead_text": ""},
+    )
+    text = " ".join([
+        meta.youtube_title,
+        meta.youtube_description,
+        meta.instagram_caption,
+        meta.tiktok_caption,
+    ])
+    assert "타이밍이 맞았다" in text
+    assert "POP" not in text
+    assert "B.Line" not in text

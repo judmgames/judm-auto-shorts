@@ -55,6 +55,8 @@ def _scene_copy(game: str, style: str, clear_drop: float) -> tuple[str, str]:
         return "여기까지 이어졌다", "쌓이던 흐름이 결과로 이어진 순간."
     if style == "IMPACT":
         return "딱 이 장면", "가장 큰 변화가 나온 순간."
+    if style == "TIMING":
+        return "타이밍이 맞았다", "움직임이 정확히 이어진 순간."
     if style == "NEAR_FAIL":
         return "아슬아슬했던 순간", "끝까지 결과가 갈린 장면."
     if style == "FAIL":
