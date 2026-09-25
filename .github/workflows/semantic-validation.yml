@@ -58,6 +58,7 @@ jobs:
           JUDM_SEMANTIC_REQUIRED: 'true'
           JUDM_PREVIEW_INDEX: '0'
         run: |
+          set -o pipefail
           start=$(date +%s)
           python -m judm_auto_shorts.preview | tee semantic-preview-result.json
           finish=$(date +%s)
@@ -69,6 +70,7 @@ jobs:
           fi
 
       - name: Upload semantic benchmark
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: judm-semantic-v4-benchmark

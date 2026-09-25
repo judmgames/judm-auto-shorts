@@ -22,14 +22,19 @@ EVENTS = {
 }
 OUTCOMES = {"success", "failure", "recovery", "unknown"}
 CONFIDENCE = {"low": 0.35, "medium": 0.60, "high": 0.85}
-PROMPT = """You are reviewing three consecutive frames from a gameplay video.
-Classify only what is visually supported. Do not infer scores, records, game rules,
-or text that is not clearly visible. Reply with exactly one line:
-SCENE=gameplay|menu|result|loading|unknown;
-EVENT=clear|impact|danger|chain|movement|transition|unknown;
-OUTCOME=success|failure|recovery|unknown;
-CONFIDENCE=low|medium|high
-Use unknown whenever evidence is insufficient.
+PROMPT = """Review these three frames in chronological order.
+Choose exactly ONE word for each field. Do not explain. Do not copy the option
+lists and never output the | character.
+
+SCENE allowed words: gameplay, menu, result, loading, unknown
+EVENT allowed words: clear, impact, danger, chain, movement, transition, unknown
+OUTCOME allowed words: success, failure, recovery, unknown
+CONFIDENCE allowed words: low, medium, high
+
+Return exactly one line in this format:
+SCENE=<word>; EVENT=<word>; OUTCOME=<word>; CONFIDENCE=<word>
+
+Use only what the frames visibly support. If unsure, use unknown.
 """
 
 
