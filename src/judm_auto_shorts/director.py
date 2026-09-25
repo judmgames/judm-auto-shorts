@@ -58,6 +58,7 @@ class CreativePlan:
     cold_open: bool
     cold_open_duration: float
     treatment: str
+    focus_start_x: float
     focus_x: float
     focus_y: float
     focus_confidence: float
@@ -369,8 +370,10 @@ def _copy_for_candidate(game_key: str, c: EventCandidate) -> tuple[str, str]:
             if c.relief >= 0.18:
                 return "", "한 번에."
             return "", "됐다."
-        if c.style == "TURNAROUND":
+        if c.style == "TURNAROUND" and c.relief >= 0.10:
             return "여기.", "살았다."
+        if c.style == "TURNAROUND":
+            return "", ""
     if game_key == "PN37" and c.style == "FEVER":
         return "", "왔다."
     if c.style == "CLEAR" and c.relief >= 0.20:
@@ -473,6 +476,14 @@ def plan_from_signals(
     x0, y0, x1, y1 = profile.roi
     full_focus_x = x0 + best.focus_x * (x1 - x0)
     full_focus_y = y0 + best.focus_y * (y1 - y0)
+
+    start_idx = int(np.searchsorted(t, min(best.time, start + 0.8)))
+    start_idx = max(0, min(len(t) - 1, start_idx))
+    start_fx_roi, _, start_fc = _weighted_focus(signals, start_idx, radius)
+    if start_fc < 0.10:
+        start_fx_roi = best.focus_x
+    full_focus_start_x = x0 + start_fx_roi * (x1 - x0)
+
     focus_conf = max(best.focus_confidence, profile.min_focus_scale)
     alt = tuple(f"{c.style}:{c.score:.2f}@{c.time:.1f}" for c in candidates[1:4])
     signature = (
@@ -499,6 +510,7 @@ def plan_from_signals(
         cold_open=cold_open,
         cold_open_duration=cold_len,
         treatment=treatment,
+        focus_start_x=round(float(np.clip(full_focus_start_x, 0.05, 0.95)), 3),
         focus_x=round(float(np.clip(full_focus_x, 0.05, 0.95)), 3),
         focus_y=round(float(np.clip(full_focus_y, 0.05, 0.95)), 3),
         focus_confidence=round(float(np.clip(focus_conf, 0, 1)), 3),

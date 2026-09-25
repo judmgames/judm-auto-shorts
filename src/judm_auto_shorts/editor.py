@@ -129,9 +129,27 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     if aspect >= 1.20:
         focus_height = int(760 + 170 * float(plan.focus_confidence))
         target_w = int(max(1280, min(2100, focus_height * aspect)))
-        crop_x = (
-            f"max(0,min(iw-1080,iw*{plan.focus_x:.4f}-540))"
-        )
+        focus_start = float(plan.focus_start_x)
+        focus_end = float(plan.focus_x)
+        pan_distance = abs(focus_end - focus_start)
+        if pan_distance < 0.035 or plan.focus_confidence < 0.15:
+            focus_expr = f"{focus_end:.4f}"
+        elif cold:
+            pan_secs = max(float(plan.payoff_at), 0.2)
+            progress = (
+                f"min(1,max(0,(t-{cold:.3f})/{pan_secs:.3f}))"
+            )
+            focus_expr = (
+                f"if(lt(t,{cold:.3f}),{focus_end:.4f},"
+                f"{focus_start:.4f}+({focus_end-focus_start:.4f})*{progress})"
+            )
+        else:
+            pan_secs = max(float(plan.payoff_at), 0.2)
+            progress = f"min(1,max(0,t/{pan_secs:.3f}))"
+            focus_expr = (
+                f"{focus_start:.4f}+({focus_end-focus_start:.4f})*{progress}"
+            )
+        crop_x = f"max(0,min(iw-1080,iw*({focus_expr})-540))"
         foreground = (
             f"[fg0]scale={target_w}:-2[fgs];"
             f"[fgs]crop=1080:ih:x='{crop_x}':y=0[fg]"
