@@ -45,6 +45,14 @@ def _scene_copy(style: str, clear_drop: float) -> tuple[str, str]:
         return "여기서 지웠다", "POP이 나온 순간."
     if style == "FEVER":
         return "왔다", "플레이 흐름이 바뀐 순간."
+    if style == "TURNAROUND":
+        return "여기서 바뀌었다", "흐름이 뒤집힌 장면."
+    if style == "BUILDUP":
+        return "여기까지 이어졌다", "쌓이던 흐름이 결과로 이어진 순간."
+    if style == "IMPACT":
+        return "딱 이 장면", "가장 큰 변화가 나온 순간."
+    if style == "RHYTHM":
+        return "손맛 좋았던 구간", "플레이 리듬이 이어진 구간."
     if style == "MISTAKE":
         return "여기서 꼬였다", "다시 보니 여기였다."
     if style == "ASMR":

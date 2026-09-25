@@ -2,15 +2,17 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from judm_auto_shorts.editor import auto_edit, probe
 from judm_auto_shorts.metadata import make_metadata
 
 
-def test_editor_smoke(tmp_path):
+@pytest.mark.parametrize("filename", ["BLINE_test.mp4", "unknown_game.mp4"])
+def test_editor_smoke(tmp_path, filename):
     if os.name == "nt":
-        import pytest
         pytest.skip("FFmpeg render smoke is validated on Ubuntu GitHub Actions")
-    src = tmp_path / "BLINE_test.mp4"
+    src = tmp_path / filename
     subprocess.run(
         [
             "ffmpeg", "-y", "-v", "error",
@@ -29,7 +31,7 @@ def test_editor_smoke(tmp_path):
         os.environ["JUDM_BODY_FONT"] = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
     out = auto_edit(src, tmp_path / "out", make_metadata(src.name))
-    assert out["creative"]["style"] in {"RESCUE", "CLEAR", "MISTAKE", "ASMR"}
+    assert out["creative"]["style"] in {"CLEAR", "TURNAROUND", "BUILDUP", "IMPACT", "RHYTHM", "FEVER", "ASMR"}
     for key in ("youtube", "instagram", "tiktok"):
         p = Path(out[key])
         assert p.exists() and p.stat().st_size > 1000

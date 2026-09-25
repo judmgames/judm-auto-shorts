@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+
+import cv2
+
 from dataclasses import dataclass
 from pathlib import Path
 
-from .creative import CreativePlan, analyze_creative
+from .creative import CreativePlan, CreativeReject, analyze_creative
 from .metadata import LABEL
 
 
@@ -87,8 +90,8 @@ def _draw_text(stream: str, out: str, text: str, start: float, end: float, font_
     size = 70 if len(text.replace(" ", "")) <= 4 else 62
     return (
         f"[{stream}]drawtext=fontfile='{font_path}':text='{esc(text)}':"
-        f"fontsize={size}:fontcolor=white:borderw=4:bordercolor=black@.88:"
-        f"box=1:boxcolor=black@.34:boxborderw=18:"
+        f"fontsize={size}:fontcolor=white:borderw=3:bordercolor=black@.88:"
+        f"shadowcolor=black@.45:shadowx=2:shadowy=3:"
         f"x=(w-text_w)/2:y={y}:enable='between(t,{start:.2f},{end:.2f})'[{out}]"
     )
 
@@ -117,15 +120,22 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     final_payoff = cold + plan.payoff_at
     final_duration = cold + plan.duration
     zoom_start = max(0.0, final_payoff - 0.34)
-    zoom_end = min(final_duration, final_payoff + 0.48)
-    cold_expr = f"+0.08*between(t,0,{cold:.2f})" if cold else ""
-    factor = f"1{cold_expr}+0.13*between(t,{zoom_start:.2f},{zoom_end:.2f})"
+    zoom_end = min(final_duration, final_payoff + 0.52)
+    cold_expr = f"+0.06*between(t,0,{cold:.2f})" if cold else ""
+    punch = max(0.05, min(0.18, float(plan.zoom_strength)))
+    factor = f"1{cold_expr}+{punch:.3f}*between(t,{zoom_start:.2f},{zoom_end:.2f})"
 
-    if plan.game_key == "BLINE":
-        # B.Line POP is recorded in a very wide landscape layout. Showing the
-        # whole 2340x1080 frame makes the actual board tiny on a phone.
-        # Enlarge the gameplay layer and let the outer decoration crop away.
-        foreground = "[fg0]scale=1460:-2[fg]"
+    aspect = p.width / max(p.height, 1)
+    if aspect >= 1.20:
+        focus_height = int(760 + 170 * float(plan.focus_confidence))
+        target_w = int(max(1280, min(2100, focus_height * aspect)))
+        crop_x = (
+            f"max(0,min(iw-1080,iw*{plan.focus_x:.4f}-540))"
+        )
+        foreground = (
+            f"[fg0]scale={target_w}:-2[fgs];"
+            f"[fgs]crop=1080:ih:x='{crop_x}':y=0[fg]"
+        )
     else:
         foreground = (
             "[fg0]scale=1080:1920:force_original_aspect_ratio=decrease[fg]"
@@ -150,8 +160,9 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     if plan.style == "MISTAKE" and cold:
         lead_start, lead_end = 0.06, min(cold, 0.48)
 
-    draw1 = _draw_text("zoom", "txt1", plan.lead_text, lead_start, lead_end, hf, "h-430")
-    draw2 = _draw_text("txt1", "txt2", plan.payoff_text, payoff_start, payoff_end, hf, "h-430")
+    caption_y = "220" if plan.focus_y >= 0.57 else "h-390"
+    draw1 = _draw_text("zoom", "txt1", plan.lead_text, lead_start, lead_end, hf, caption_y)
+    draw2 = _draw_text("txt1", "txt2", plan.payoff_text, payoff_start, payoff_end, hf, caption_y)
     watermark = (
         f";[txt2]drawtext=fontfile='{bf}':text='{esc(label)}':fontsize=30:"
         f"fontcolor=white@.72:borderw=2:bordercolor=black@.58:"
@@ -160,6 +171,9 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     fc = seq + visual + ";" + draw1 + ";" + draw2 + watermark
 
     if p.has_audio:
+        audio_boost = 1.12 if plan.treatment in {"REVEAL", "PUNCH", "BUILD"} else 1.06
+        boost_start = max(0.0, final_payoff - 0.18)
+        boost_end = min(final_duration, final_payoff + 0.42)
         if cold:
             cold_start = max(0.0, min(payoff_abs - 0.14, max(0.0, p.duration - cold)))
             fc += (
@@ -168,6 +182,7 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
                 f"[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
                 f"asetpts=PTS-STARTPTS[maina];"
                 f"[colda][maina]concat=n=2:v=0:a=1,"
+                f"volume={audio_boost:.2f}:enable='between(t,{boost_start:.2f},{boost_end:.2f})',"
                 f"afade=t=in:st=0:d=0.04,"
                 f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
             )
@@ -175,6 +190,7 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
             fc += (
                 f";[0:a]atrim=start={plan.start:.3f}:duration={plan.duration:.3f},"
                 f"asetpts=PTS-STARTPTS,"
+                f"volume={audio_boost:.2f}:enable='between(t,{boost_start:.2f},{boost_end:.2f})',"
                 f"afade=t=in:st=0:d=0.04,"
                 f"afade=t=out:st={max(0.0, final_duration - 0.18):.2f}:d=0.18[aout]"
             )
@@ -193,16 +209,49 @@ def render(src: str | Path, dst: str | Path, plan: CreativePlan, label: str) -> 
     return str(dst)
 
 
-def auto_edit(src: str | Path, out_dir: str | Path, meta_or_game) -> dict:
+def validate_render_quality(path: str | Path) -> None:
+    path = Path(path)
+    pr = probe(path)
+    if pr.width != 1080 or pr.height != 1920:
+        raise CreativeReject(f"render geometry invalid: {pr.width}x{pr.height}")
+    if not (5.0 <= pr.duration <= 16.0):
+        raise CreativeReject(f"render duration invalid: {pr.duration:.2f}s")
+    if path.stat().st_size < 100_000:
+        raise CreativeReject("render output unexpectedly small")
+
+    cap = cv2.VideoCapture(str(path))
+    samples = []
+    for sec in (0.2, pr.duration * 0.5, max(0.2, pr.duration - 0.3)):
+        cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000.0)
+        ok, frame = cap.read()
+        if ok and frame is not None:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            samples.append(float(gray.mean()))
+    cap.release()
+    if len(samples) < 2:
+        raise CreativeReject("render could not be sampled for final QC")
+    if max(samples) < 12.0:
+        raise CreativeReject("render appears black or visually broken")
+
+
+def auto_edit(
+    src: str | Path,
+    out_dir: str | Path,
+    meta_or_game,
+    avoid_styles: set[str] | None = None,
+) -> dict:
     p = probe(src)
     if p.duration < 2 or p.width < 240 or p.height < 240:
         raise ValueError(f"source video too small/short: {p}")
     game_key = getattr(meta_or_game, "game_key", str(meta_or_game))
-    plan = analyze_creative(src, game_key, p.duration)
+    plan = analyze_creative(
+        src, game_key, p.duration, avoid_styles=avoid_styles
+    )
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    master = out / f"{Path(src).stem}_v3.mp4"
+    master = out / f"{Path(src).stem}_v4.mp4"
     render(src, master, plan, LABEL.get(game_key, LABEL["GENERIC"]))
+    validate_render_quality(master)
     path = str(master)
     return {
         "youtube": path,

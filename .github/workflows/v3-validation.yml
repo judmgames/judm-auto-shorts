@@ -1,9 +1,10 @@
-name: JUD.M Creative Engine V3 Validation
+name: JUD.M Universal Director V4 Validation
 
 on:
   push:
     branches:
       - feature/creative-engine-v3
+      - feature/universal-director-v4
       - main
   workflow_dispatch:
 
@@ -35,7 +36,7 @@ jobs:
           fc-cache -f
           pip install -r requirements.txt
 
-      - name: Run V3 tests
+      - name: Run director tests
         env:
           PYTHONPATH: src
         run: pytest -q

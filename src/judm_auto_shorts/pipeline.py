@@ -90,11 +90,27 @@ def process_one() -> dict:
                 raise RuntimeError(f"Source video too small/short: {pr}")
 
             base_meta = make_metadata(f["name"])
-            outputs = auto_edit(raw, Path(td) / "edited", base_meta)
+            recent = drive.list_posted(sib["posted"], limit=6)
+            recent_styles = [
+                (x.get("appProperties") or {}).get("judm_creative_style")
+                for x in recent
+            ]
+            recent_styles = [x for x in recent_styles if x]
+            avoid_styles: set[str] = set()
+            if len(recent_styles) >= 2 and recent_styles[0] == recent_styles[1]:
+                avoid_styles.add(recent_styles[0])
+            outputs = auto_edit(
+                raw,
+                Path(td) / "edited",
+                base_meta,
+                avoid_styles=avoid_styles,
+            )
             creative = outputs["creative"]
             meta = make_metadata(f["name"], creative)
             result["creative"] = creative
             result["highlight"] = outputs["highlight"]
+            result["recent_styles"] = recent_styles[:3]
+            result["avoid_styles"] = sorted(avoid_styles)
 
             if "youtube" in runnable:
                 vid = publish_youtube(
@@ -107,6 +123,7 @@ def process_one() -> dict:
                     judm_youtube_id=vid,
                     judm_error="",
                     judm_creative_style=creative["style"],
+                    judm_creative_signature=creative.get("signature", ""),
                 )
                 result["published"]["youtube"] = vid
 
@@ -124,6 +141,7 @@ def process_one() -> dict:
                     judm_instagram_id=mid,
                     judm_error="",
                     judm_creative_style=creative["style"],
+                    judm_creative_signature=creative.get("signature", ""),
                 )
                 result["published"]["instagram"] = mid
 
@@ -139,6 +157,7 @@ def process_one() -> dict:
                     judm_tiktok_id=tid,
                     judm_error="",
                     judm_creative_style=creative["style"],
+                    judm_creative_signature=creative.get("signature", ""),
                 )
                 result["published"]["tiktok"] = tid
 

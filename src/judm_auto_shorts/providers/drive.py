@@ -52,6 +52,11 @@ class DriveProvider:
                     out.append(f); seen.add(f["id"])
         out.sort(key=lambda x:x.get("createdTime", "")); return out[:limit]
 
+    def list_posted(self,posted_id:str,limit=8):
+        out=self._list(posted_id,limit)
+        out.sort(key=lambda x:x.get("createdTime", ""),reverse=True)
+        return out[:limit]
+
     def download(self,file_id:str,target:str|Path):
         target=Path(target); target.parent.mkdir(parents=True,exist_ok=True)
         req=self.api.files().get_media(fileId=file_id,supportsAllDrives=True)
