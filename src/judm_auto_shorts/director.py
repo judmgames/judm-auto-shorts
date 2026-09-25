@@ -28,6 +28,10 @@ class CreativeReject(RuntimeError):
     pass
 
 
+class SemanticUnavailable(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class EventCandidate:
     index: int
@@ -1012,7 +1016,7 @@ def analyze_creative(
     preferred_hint = None
 
     try:
-        from .semantic import analyze_semantic, semantic_enabled
+        from .semantic import analyze_semantic, semantic_enabled, semantic_required
 
         if semantic_enabled():
             candidates, _ = _build_candidates(game_key, signals, duration)
@@ -1046,7 +1050,7 @@ def analyze_creative(
     )
 
     try:
-        from .semantic import analyze_semantic, semantic_enabled
+        from .semantic import analyze_semantic, semantic_enabled, semantic_required
 
         if not semantic_enabled():
             return plan
@@ -1058,7 +1062,16 @@ def analyze_creative(
                 path,
                 plan.start + plan.payoff_at,
             )
+        if semantic_required() and not bool(
+            getattr(preferred_hint, "available", False)
+        ):
+            reason = getattr(preferred_hint, "reason", "unavailable")
+            raise SemanticUnavailable(
+                f"semantic director required but unavailable: {reason}"
+            )
         return _apply_semantic_hint(plan, preferred_hint)
+    except SemanticUnavailable:
+        raise
     except CreativeReject:
         raise
     except Exception as exc:

@@ -55,6 +55,7 @@ jobs:
         env:
           PYTHONPATH: src
           JUDM_SEMANTIC_ENABLED: 'true'
+          JUDM_SEMANTIC_REQUIRED: 'true'
           JUDM_PREVIEW_INDEX: '0'
         run: |
           start=$(date +%s)

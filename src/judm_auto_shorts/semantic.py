@@ -50,6 +50,12 @@ def semantic_enabled() -> bool:
     }
 
 
+def semantic_required() -> bool:
+    return os.getenv("JUDM_SEMANTIC_REQUIRED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 def _pick(text: str, key: str, allowed: set[str]) -> str:
     match = re.search(
         rf"\b{re.escape(key)}\s*=\s*([A-Za-z_]+)",
